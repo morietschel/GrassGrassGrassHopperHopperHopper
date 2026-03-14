@@ -1,5 +1,10 @@
 ﻿using System;
+using System.Reflection;
+using HelloRhinoCommon.Runtime;
+using HelloRhinoCommon.UI;
 using Rhino;
+using Rhino.PlugIns;
+using Rhino.UI;
 
 namespace HelloRhinoCommon
 {
@@ -11,7 +16,7 @@ namespace HelloRhinoCommon
     /// attributes in AssemblyInfo.cs (you might need to click "Project" ->
     /// "Show All Files" to see it in the "Solution Explorer" window).</para>
     ///</summary>
-    public class HelloRhinoCommonPlugin : Rhino.PlugIns.PlugIn
+    public class HelloRhinoCommonPlugin : PlugIn
     {
         public HelloRhinoCommonPlugin()
         {
@@ -19,10 +24,28 @@ namespace HelloRhinoCommon
         }
         
         ///<summary>Gets the only instance of the HelloRhinoCommonPlugin plug-in.</summary>
-        public static HelloRhinoCommonPlugin Instance { get; private set; }
+        public static HelloRhinoCommonPlugin Instance { get; private set; } = null!;
 
-        // You can override methods here to change the plug-in behavior on
-        // loading and shut down, add options pages to the Rhino _Option command
-        // and maintain plug-in wide options in a document.
+        internal ModifierEngine Engine { get; private set; } = null!;
+
+        protected override LoadReturnCode OnLoad(ref string errorMessage)
+        {
+            Panels.RegisterPanel(
+                this,
+                typeof(ModifierStackPanel),
+                "GGH Stack",
+                Assembly.GetExecutingAssembly(),
+                "HelloRhinoCommon.EmbeddedResources.plugin-utility.ico",
+                PanelType.PerDoc);
+
+            Engine = new ModifierEngine();
+            return LoadReturnCode.Success;
+        }
+
+        protected override void OnShutdown()
+        {
+            Engine.Dispose();
+            base.OnShutdown();
+        }
     }
 }

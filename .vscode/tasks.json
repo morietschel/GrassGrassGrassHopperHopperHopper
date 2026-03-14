@@ -2,11 +2,31 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build",
+      "label": "build netcore",
       "command": "dotnet",
       "type": "shell",
       "args": [
         "build",
+        "-f",
+        "net7.0",
+        "-clp:NoSummary",
+        "${workspaceFolder}/HelloRhinoCommon.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "clear": true
+      },
+      "group": "build"
+    },
+    {
+      "label": "build netfx",
+      "command": "dotnet",
+      "type": "shell",
+      "args": [
+        "build",
+        "-f",
+        "net48",
         "-clp:NoSummary",
         "${workspaceFolder}/HelloRhinoCommon.csproj"
       ],

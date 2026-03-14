@@ -1,17 +1,22 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 	
   <PropertyGroup>
-    <!-- Select the framework(s) you wish to target.
-        Rhino 6: net45
-        Rhino 7: net48
-        Rhino 8 Windows: net48, net7.0, net7.0-windows, net7.0-windows10.0.22000.0, etc
-        Rhino 8 Mac: net7.0, net7.0-macos, net7.0-macos12.0, etc
-    -->
-    <TargetFrameworks>net7.0;net48</TargetFrameworks>
+    <!-- MVP target is Rhino 8 on macOS; keep the project single-target to avoid
+         carrying Windows/net48 Grasshopper reference complexity in the first slice. -->
+    <TargetFramework>net7.0</TargetFramework>
     <EnableDynamicLoading>true</EnableDynamicLoading>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <Nullable>enable</Nullable>
     <TargetExt>.rhp</TargetExt>
     <NoWarn>NU1701</NoWarn>
+  </PropertyGroup>
+
+  <PropertyGroup>
+    <GrasshopperHintPath>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/ManagedPlugIns/GrasshopperPlugin.rhp/Grasshopper.dll</GrasshopperHintPath>
+    <GhIoHintPath>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/ManagedPlugIns/GrasshopperPlugin.rhp/GH_IO.dll</GhIoHintPath>
+    <RhinoCommonHintPath>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/RhinoCommon.dll</RhinoCommonHintPath>
+    <RhinoUiHintPath>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/Rhino.UI.dll</RhinoUiHintPath>
+    <EtoHintPath>/Applications/Rhino 8.app/Contents/Frameworks/RhCore.framework/Versions/A/Resources/Eto.dll</EtoHintPath>
   </PropertyGroup>
   
   <PropertyGroup>
@@ -23,7 +28,26 @@
   </PropertyGroup>
   
   <ItemGroup>
-    <PackageReference Include="RhinoCommon" Version="8.0.23304.9001" ExcludeAssets="runtime" />
+    <Reference Include="RhinoCommon" Condition="Exists('$(RhinoCommonHintPath)')">
+      <HintPath>$(RhinoCommonHintPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Rhino.UI" Condition="Exists('$(RhinoUiHintPath)')">
+      <HintPath>$(RhinoUiHintPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Eto" Condition="Exists('$(EtoHintPath)')">
+      <HintPath>$(EtoHintPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Grasshopper">
+      <HintPath>$(GrasshopperHintPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="GH_IO" Condition="Exists('$(GhIoHintPath)')">
+      <HintPath>$(GhIoHintPath)</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
   
 </Project>

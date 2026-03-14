@@ -5,7 +5,7 @@
       "name": "Rhino 8 - netcore",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "build",
+      "preLaunchTask": "build netcore",
       "program": "",
       "osx": {
         "program": "/Applications/Rhino 8.app/Contents/MacOS/Rhinoceros",
@@ -19,7 +19,7 @@
         ]
       },
       "env": {
-        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug"
+        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug/net7.0"
       },
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
@@ -29,7 +29,7 @@
       "name": "Rhino 8 Windows - netfx",
       "type": "clr",
       "request": "launch",
-      "preLaunchTask": "build",
+      "preLaunchTask": "build netfx",
       "windows": {
         "program": "C:\\Program Files\\Rhino 8\\System\\Rhino.exe",
         "targetArchitecture": "x86_64",
@@ -38,7 +38,7 @@
         ]
       },
       "env": {
-        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug"
+        "RHINO_PACKAGE_DIRS": "${workspaceFolder}/bin/Debug/net48"
       },
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
