@@ -20,6 +20,8 @@ internal sealed class ModifierStepPanelState
 {
     public int Index { get; init; }
 
+    public Guid StepId { get; init; }
+
     public bool Enabled { get; init; }
 
     public string DisplayName { get; init; } = string.Empty;
@@ -64,9 +66,48 @@ internal sealed class ModifierStepInputPanelState
 
     public bool IsReadOnly { get; init; }
 
+    public bool HasLink { get; init; }
+
+    public bool IsLinkBroken { get; init; }
+
+    public string LinkSourceStepLabel { get; init; } = string.Empty;
+
+    public string LinkSourceOutputLabel { get; init; } = string.Empty;
+
+    public string LinkStatusMessage { get; init; } = string.Empty;
+
+    public IReadOnlyList<ModifierInputLinkOptionPanelState> AvailableLinks { get; init; } = Array.Empty<ModifierInputLinkOptionPanelState>();
+
     public bool IsMissingRequiredValue { get; init; }
 
     public string ValidationMessage { get; init; } = string.Empty;
+
+    public bool ShowModifiedGeometryToggle { get; init; }
+
+    public bool UseModifiedGeometry { get; init; }
+
+    public Guid? ModifiedGeometrySourceObjectId { get; init; }
+}
+
+internal sealed class ModifierInputLinkOptionPanelState
+{
+    public Guid SourceStepId { get; init; }
+
+    public int SourceStepIndex { get; init; }
+
+    public string SourceStepLabel { get; init; } = string.Empty;
+
+    public string SourceOutputId { get; init; } = string.Empty;
+
+    public string SourceOutputLabel { get; init; } = string.Empty;
+
+    public ModifierIoKind Kind { get; init; }
+
+    public bool HasRuntimeValue { get; init; }
+
+    public string RuntimeDisplayValue { get; init; } = string.Empty;
+
+    public bool IsSelected { get; init; }
 }
 
 internal sealed class ModifierStepOutputPanelState
