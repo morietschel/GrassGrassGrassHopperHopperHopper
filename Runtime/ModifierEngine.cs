@@ -5,6 +5,7 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
+using GH_IO.Serialization;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Base;
 using Grasshopper.Kernel;
@@ -698,18 +699,20 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         Log($"Loading Grasshopper definition from disk. Path={fullPath}");
-        var io = new GH_DocumentIO();
-        if (!io.Open(fullPath))
+        var archive = new GH_Archive();
+        if (!archive.ReadFromFile(fullPath))
         {
             throw new InvalidOperationException($"Failed to load Grasshopper definition '{fullPath}'.");
         }
 
-        if (io.Document is null)
+        var document = new GH_Document();
+        if (!archive.ExtractObject(document, "Definition"))
         {
+            document.Dispose();
             throw new InvalidOperationException($"Grasshopper definition '{fullPath}' did not produce a document.");
         }
 
-        var template = new DefinitionTemplate(fullPath, lastWriteUtc, io.Document, CreateDefinitionContract(io.Document));
+        var template = new DefinitionTemplate(fullPath, lastWriteUtc, document, CreateDefinitionContract(document));
         _definitionCache[fullPath] = template;
         Log($"Definition template cached. Path={fullPath}, LastWriteUtc={lastWriteUtc:O}");
         return template;
