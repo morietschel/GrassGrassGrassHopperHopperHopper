@@ -699,23 +699,47 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         Log($"Loading Grasshopper definition from disk. Path={fullPath}");
-        var archive = new GH_Archive();
-        if (!archive.ReadFromFile(fullPath))
-        {
-            throw new InvalidOperationException($"Failed to load Grasshopper definition '{fullPath}'.");
-        }
-
-        var document = new GH_Document();
-        if (!archive.ExtractObject(document, "Definition"))
-        {
-            document.Dispose();
-            throw new InvalidOperationException($"Grasshopper definition '{fullPath}' did not produce a document.");
-        }
+        var document = LoadDefinitionDocument(fullPath);
 
         var template = new DefinitionTemplate(fullPath, lastWriteUtc, document, CreateDefinitionContract(document));
         _definitionCache[fullPath] = template;
         Log($"Definition template cached. Path={fullPath}, LastWriteUtc={lastWriteUtc:O}");
         return template;
+    }
+
+    private static GH_Document LoadDefinitionDocument(string fullPath)
+    {
+        return WithMissingPluginDialogSuppressed(() =>
+        {
+            var archive = new GH_Archive();
+            if (!archive.ReadFromFile(fullPath))
+            {
+                throw new InvalidOperationException($"Failed to load Grasshopper definition '{fullPath}'.");
+            }
+
+            var document = new GH_Document();
+            if (!archive.ExtractObject(document, "Definition"))
+            {
+                document.Dispose();
+                throw new InvalidOperationException($"Grasshopper definition '{fullPath}' did not produce a document.");
+            }
+
+            return document;
+        });
+    }
+
+    private static T WithMissingPluginDialogSuppressed<T>(Func<T> action)
+    {
+        var original = Grasshopper.CentralSettings.TryDownloadMissingPlugins;
+        Grasshopper.CentralSettings.TryDownloadMissingPlugins = false;
+        try
+        {
+            return action();
+        }
+        finally
+        {
+            Grasshopper.CentralSettings.TryDownloadMissingPlugins = original;
+        }
     }
 
     private static StepEvaluationResult EvaluateStep(RhinoDoc doc, StepRuntime runtime, ModifierStepSpec stepSpec, IReadOnlyList<GeometryBase> inputGeometry)
