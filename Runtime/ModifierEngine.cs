@@ -544,6 +544,87 @@ internal sealed class ModifierEngine : IDisposable
         return true;
     }
 
+    public bool ApplyThroughStep(RhinoDoc doc, Guid objectId, int stepIndex, out string message)
+    {
+        message = string.Empty;
+        Log($"ApplyThroughStep requested. Object={objectId}, StepIndex={stepIndex}");
+
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            message = "Selected object no longer exists.";
+            Log(message);
+            return false;
+        }
+
+        var spec = ModifierStackStorage.Load(rhinoObject);
+        if (stepIndex < 0 || stepIndex >= spec.Steps.Count)
+        {
+            message = "Step index is out of range.";
+            Log(message);
+            return false;
+        }
+
+        if (!TryEvaluateStackThroughStep(doc, objectId, rhinoObject, spec, stepIndex, out var evaluatedGeometry, out var evaluationError))
+        {
+            message = evaluationError;
+            Log($"ApplyThroughStep evaluation failed. Object={objectId}, StepIndex={stepIndex}, Error={evaluationError}");
+            return false;
+        }
+
+        if (evaluatedGeometry.Count == 0)
+        {
+            message = "The selected modifier output is empty; apply was cancelled to avoid deleting geometry.";
+            Log(message);
+            return false;
+        }
+
+        foreach (var geometry in evaluatedGeometry)
+        {
+            if (!TryEnsureSupportedApplyGeometry(geometry, out var unsupportedError))
+            {
+                message = unsupportedError;
+                Log($"ApplyThroughStep geometry validation failed. {unsupportedError}");
+                return false;
+            }
+        }
+
+        if (!ReplaceManagedObjectGeometry(doc, objectId, evaluatedGeometry[0], out var replaceError))
+        {
+            message = replaceError;
+            Log($"ApplyThroughStep failed replacing object geometry. Object={objectId}, Error={replaceError}");
+            return false;
+        }
+
+        var newObjectAttributes = rhinoObject.Attributes.Duplicate();
+        newObjectAttributes.UserDictionary.Remove(ModifierStackSpec.UserDictionaryKey);
+
+        for (var i = 1; i < evaluatedGeometry.Count; i++)
+        {
+            if (!TryAddGeometryObject(doc, evaluatedGeometry[i], newObjectAttributes, out var addError))
+            {
+                message = $"Applied base object, but failed to add additional geometry item {i + 1}: {addError}";
+                Log($"ApplyThroughStep partially succeeded. Object={objectId}, Index={i}, Error={addError}");
+                return false;
+            }
+        }
+
+        spec.Steps.RemoveRange(0, stepIndex + 1);
+        if (!ModifierStackStorage.Save(doc, objectId, spec))
+        {
+            message = "Applied geometry, but failed to update remaining modifier stack.";
+            Log($"ApplyThroughStep failed updating stack metadata after apply. Object={objectId}");
+            return false;
+        }
+
+        ResetStackRuntime(doc, objectId, spec);
+        message = stepIndex == 0
+            ? "Applied modifier and removed it from the stack."
+            : $"Applied {stepIndex + 1} modifiers and removed them from the stack.";
+        Log($"ApplyThroughStep completed. Object={objectId}, AppliedCount={stepIndex + 1}, RemainingSteps={spec.Steps.Count}");
+        return true;
+    }
+
     public void Dispose()
     {
         if (_disposed)
@@ -2802,6 +2883,127 @@ internal sealed class ModifierEngine : IDisposable
         return !waitingForUpstream;
     }
 
+    private bool TryEvaluateStackThroughStep(
+        RhinoDoc doc,
+        Guid objectId,
+        RhinoObject rhinoObject,
+        ModifierStackSpec spec,
+        int stepIndex,
+        out List<GeometryBase> outputGeometry,
+        out string error)
+    {
+        outputGeometry = new List<GeometryBase>();
+        error = string.Empty;
+
+        if (!GeometryConversion.TryGetSourceGeometry(rhinoObject.Geometry, out var currentGeometry, out var sourceError))
+        {
+            error = sourceError;
+            return false;
+        }
+
+        var runtime = GetOrCreateStackRuntime(doc, objectId);
+        runtime.EnsureStepCapacity(spec.Steps.Count);
+
+        for (var i = 0; i <= stepIndex; i++)
+        {
+            var stepSpec = spec.Steps[i];
+            if (!stepSpec.Enabled)
+            {
+                continue;
+            }
+
+            StepRuntime stepRuntime;
+            try
+            {
+                stepRuntime = EnsureStepRuntime(runtime, i, stepSpec);
+            }
+            catch (Exception ex)
+            {
+                error = $"Modifier {i + 1} failed to initialize: {ex.Message}";
+                return false;
+            }
+
+            var result = EvaluateStep(doc, stepRuntime, stepSpec, i, spec.Steps, publishedOutputsByStepId, currentGeometry);
+            if (!result.Success)
+            {
+                error = $"Modifier {i + 1} '{Path.GetFileName(stepSpec.Path)}' failed: {result.ErrorMessage}";
+                return false;
+            }
+
+            publishedOutputsByStepId[stepSpec.StepId] = result.PublishedOutputs;
+            if (result.HasGeometryOutput)
+            {
+                currentGeometry = CloneGeometry(result.OutputGeometry);
+            }
+        }
+
+        outputGeometry = CloneGeometry(currentGeometry);
+        return true;
+    }
+
+    private static bool TryEnsureSupportedApplyGeometry(GeometryBase geometry, out string error)
+    {
+        switch (geometry)
+        {
+            case Rhino.Geometry.Point:
+            case Curve:
+            case Brep:
+            case Mesh:
+            case SubD:
+                error = string.Empty;
+                return true;
+            default:
+                error = $"Unsupported geometry type '{geometry.ObjectType}' for apply operation.";
+                return false;
+        }
+    }
+
+    private static bool ReplaceManagedObjectGeometry(RhinoDoc doc, Guid objectId, GeometryBase geometry, out string error)
+    {
+        error = string.Empty;
+        var toReplaceWith = geometry.Duplicate();
+        var replaced = toReplaceWith switch
+        {
+            Rhino.Geometry.Point point => doc.Objects.Replace(objectId, point.Location),
+            Curve curve => doc.Objects.Replace(objectId, curve),
+            Brep brep => doc.Objects.Replace(objectId, brep),
+            Mesh mesh => doc.Objects.Replace(objectId, mesh),
+            SubD subD => doc.Objects.Replace(objectId, subD),
+            _ => false,
+        };
+
+        if (replaced)
+        {
+            return true;
+        }
+
+        error = "Rhino failed to replace object geometry.";
+        return false;
+    }
+
+    private static bool TryAddGeometryObject(RhinoDoc doc, GeometryBase geometry, ObjectAttributes attributes, out string error)
+    {
+        error = string.Empty;
+        var toAdd = geometry.Duplicate();
+        var addedId = toAdd switch
+        {
+            Rhino.Geometry.Point point => doc.Objects.AddPoint(point.Location, attributes),
+            Curve curve => doc.Objects.AddCurve(curve, attributes),
+            Brep brep => doc.Objects.AddBrep(brep, attributes),
+            Mesh mesh => doc.Objects.AddMesh(mesh, attributes),
+            SubD subD => doc.Objects.AddSubD(subD, attributes),
+            _ => Guid.Empty,
+        };
+
+        if (addedId != Guid.Empty)
+        {
+            return true;
+        }
+
+        error = "Rhino failed to add geometry produced by the applied stack.";
+        return false;
+    }
+
     private void UpdateObjectDependencies(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
     {
         var documentState = GetOrCreateDocumentState(doc);
@@ -3020,6 +3222,7 @@ internal sealed class ModifierEngine : IDisposable
         return rhinoObject is null
             ? objectId.ToString("D")
             : $"{rhinoObject.ObjectType} {rhinoObject.Id}";
+    }
     }
 
     private void ResetStackRuntime(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
