@@ -1746,7 +1746,7 @@ internal sealed class ModifierEngine : IDisposable
             descriptor = new ModifierInputDescriptor(
                 slider.InstanceGuid,
                 slider.InstanceGuid.ToString("D"),
-                GetDisplayLabel(slider),
+                slider.NickName,
                 slider.Description ?? string.Empty,
                 ModifierIoKind.NumberSlider,
                 SerializeNumber(slider.CurrentValue),

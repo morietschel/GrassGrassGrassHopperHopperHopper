@@ -708,8 +708,22 @@ public sealed class ModifierStackPanel : Panel
             Spacing = 4,
             Items =
             {
-                CreateInputHeader(objectId, step, input, toolTip),
-                editor,
+                new StackLayout
+                {
+                    Orientation = Orientation.Horizontal,
+                    Spacing = 6,
+                    Items =
+                    {
+                        new Label
+                        {
+                            Text = $"{input.Label}:",
+                            Wrap = WrapMode.Word,
+                            ToolTip = toolTip,
+                        },
+                        new StackLayoutItem(editor, true),
+                        CreateInputLinkButton(objectId, step, input),
+                    },
+                },
             },
         };
 
@@ -852,7 +866,7 @@ public sealed class ModifierStackPanel : Panel
 
         var initialValue = configuration.GetValue(configuration.GetSliderValue(GetInitialNumericValue(input)));
         var lastCommittedValue = SerializeNumber(initialValue, input.DecimalPlaces);
-        var toolTip = AppendToolTip(
+        var sliderToolTip = AppendToolTip(
             BuildInputToolTip(input),
             $"{FormatDisplayNumber(configuration.Minimum, input.DecimalPlaces)} to {FormatDisplayNumber(configuration.Maximum, input.DecimalPlaces)}");
 
@@ -862,7 +876,7 @@ public sealed class ModifierStackPanel : Panel
             MaxValue = configuration.Steps,
             Value = configuration.GetSliderValue(initialValue),
             Enabled = IsInputEnabled(step, input),
-            ToolTip = toolTip,
+            ToolTip = sliderToolTip,
         };
 
         void CommitSliderValue()
@@ -883,26 +897,20 @@ public sealed class ModifierStackPanel : Panel
 
         return new StackLayout
         {
-            Orientation = Orientation.Vertical,
-            Spacing = 2,
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
             Items =
             {
-                slider,
-                new StackLayout
+                new Label
                 {
-                    Orientation = Orientation.Horizontal,
-                    Items =
-                    {
-                        new Label
-                        {
-                            Text = FormatDisplayNumber(configuration.Minimum, input.DecimalPlaces),
-                        },
-                        new StackLayoutItem(new Panel(), true),
-                        new Label
-                        {
-                            Text = FormatDisplayNumber(configuration.Maximum, input.DecimalPlaces),
-                        },
-                    },
+                    Text = FormatDisplayNumber(configuration.Minimum, input.DecimalPlaces),
+                    ToolTip = sliderToolTip,
+                },
+                new StackLayoutItem(slider, true),
+                new Label
+                {
+                    Text = FormatDisplayNumber(configuration.Maximum, input.DecimalPlaces),
+                    ToolTip = sliderToolTip,
                 },
             },
         };
