@@ -1,0 +1,28 @@
+# Build output
+bin/
+obj/
+artifacts/
+
+# Test output
+TestResults/
+
+# Rhino/Yak packaging output
+*.yak
+*.nupkg
+*.snupkg
+
+# Visual Studio / Rider / VS Code local state
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.rsuser
+*.sln.docstates
+
+.vscode/*
+!.vscode/launch.json
+!.vscode/tasks.json
+
+# macOS Finder noise
+.DS_Store
