@@ -5,6 +5,7 @@ using System.Linq;
 using Grasshopper.Kernel;
 using Grasshopper.Kernel.Data;
 using Grasshopper.Kernel.Parameters;
+using Grasshopper.Kernel.Types;
 using HelloRhinoCommon.Models;
 using HelloRhinoCommon.UI;
 using Rhino;
@@ -621,20 +622,29 @@ internal sealed class ModifierEngine : IDisposable
             return StepEvaluationResult.Fail(error);
         }
 
+        // Use PersistentData instead of volatile data on SourceParam.
+        // SourceParam is a standalone param with no upstream sources, so
+        // CollectData() during solution can wipe manually-injected volatile
+        // data before downstream params can read it.
         runtime.SourceParam.ClearData();
+        runtime.SourceParam.PersistentData.Clear();
+        runtime.InputParam.ClearData();
         runtime.OutputParam.ClearData();
 
-        if (goos.Count > 0 && !runtime.SourceParam.AddVolatileDataList(new GH_Path(0), goos))
+        var inputPath = new GH_Path(0);
+        foreach (var goo in goos)
         {
-            return StepEvaluationResult.Fail($"Failed to push geometry into '{Path.GetFileName(runtime.Path)}'.");
+            if (goo is not IGH_GeometricGoo geometricGoo)
+            {
+                return StepEvaluationResult.Fail($"Runtime input item '{goo.TypeName}' is not geometric.");
+            }
+
+            runtime.SourceParam.PersistentData.Append(geometricGoo, inputPath);
         }
 
         runtime.SourceParam.ExpireSolution(false);
         runtime.InputParam.ExpireSolution(false);
         runtime.OutputParam.ExpireSolution(false);
-
-        // Force the duplicated definition to fully recompute from the injected runtime input,
-        // then explicitly collect the contract output param before reading its volatile data.
         runtime.Document.NewSolution(true, GH_SolutionMode.Silent);
         runtime.OutputParam.CollectData();
         runtime.OutputParam.ComputeData();
