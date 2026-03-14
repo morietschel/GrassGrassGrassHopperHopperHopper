@@ -63,6 +63,10 @@ internal sealed class ModifierStepInputPanelState
     public int DecimalPlaces { get; init; }
 
     public bool IsReadOnly { get; init; }
+
+    public bool IsMissingRequiredValue { get; init; }
+
+    public string ValidationMessage { get; init; } = string.Empty;
 }
 
 internal sealed class ModifierStepOutputPanelState

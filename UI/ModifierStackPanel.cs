@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 using Eto.Forms;
 using HelloRhinoCommon.Models;
 using Rhino;
+using Rhino.Geometry;
 using Rhino.Input;
 using Rhino.UI;
 
@@ -15,6 +16,10 @@ namespace HelloRhinoCommon.UI;
 [Guid("9D0B9A10-3A8E-46FA-B6C2-4E004A80A29B")]
 public sealed class ModifierStackPanel : Panel
 {
+    private const int MaxSliderResolution = 10000;
+    private const int FieldLabelWidth = 108;
+    private const int SliderValueWidth = 84;
+
     private readonly Label _selectionLabel;
     private readonly Label _statusLabel;
     private readonly Label _folderLabel;
@@ -23,6 +28,43 @@ public sealed class ModifierStackPanel : Panel
     private readonly Button _refreshButton;
     private readonly Button _importFolderButton;
     private readonly List<string> _importedDefinitionPaths = new();
+
+    private enum InputEditorKind
+    {
+        Text,
+        Number,
+        Slider,
+        Toggle,
+        Point,
+        Geometry,
+    }
+
+    private readonly record struct NumericSliderConfiguration(double Minimum, double Maximum, int Steps, int DecimalPlaces)
+    {
+        public double GetValue(int sliderValue)
+        {
+            if (Steps <= 0 || Maximum <= Minimum)
+            {
+                return Minimum;
+            }
+
+            var clampedValue = Math.Clamp(sliderValue, 0, Steps);
+            var progress = (double)clampedValue / Steps;
+            return RoundNumber(Minimum + ((Maximum - Minimum) * progress), DecimalPlaces);
+        }
+
+        public int GetSliderValue(double actualValue)
+        {
+            if (Steps <= 0 || Maximum <= Minimum)
+            {
+                return 0;
+            }
+
+            var clampedValue = Math.Clamp(actualValue, Minimum, Maximum);
+            var progress = (clampedValue - Minimum) / (Maximum - Minimum);
+            return (int)Math.Round(progress * Steps, MidpointRounding.AwayFromZero);
+        }
+    }
 
     public ModifierStackPanel()
     {
@@ -226,26 +268,26 @@ public sealed class ModifierStackPanel : Panel
         _addButton.Enabled = state.CanEdit && state.SelectedObjectId.HasValue;
         _refreshButton.Enabled = state.CanEdit && state.SelectedObjectId.HasValue && state.Steps.Count > 0;
 
-        var rows = new DynamicLayout
+        var rows = new StackLayout
         {
-            Padding = 0,
-            Spacing = new Eto.Drawing.Size(4, 4),
+            Orientation = Orientation.Vertical,
+            Spacing = 8,
         };
 
         if (_importedDefinitionPaths.Count > 0)
         {
-            rows.AddRow(new Label
+            rows.Items.Add(new Label
             {
                 Text = "Imported definitions (click an icon to add):",
                 Wrap = WrapMode.Word,
                 TextColor = Eto.Drawing.Colors.MediumBlue,
             });
-            rows.AddRow(CreateImportedDefinitionRow(state));
+            rows.Items.Add(CreateImportedDefinitionRow(state));
         }
 
         if (!state.CanEdit)
         {
-            rows.AddRow(new Label
+            rows.Items.Add(new Label
             {
                 Text = state.StatusMessage,
                 Wrap = WrapMode.Word,
@@ -253,20 +295,19 @@ public sealed class ModifierStackPanel : Panel
         }
         else if (state.Steps.Count == 0)
         {
-            rows.AddRow(new Label
+            rows.Items.Add(new Label
             {
                 Text = "No modifiers attached yet.",
             });
         }
         else if (state.SelectedObjectId.HasValue)
         {
-            foreach (var step in state.Steps)
+            for (var i = 0; i < state.Steps.Count; i++)
             {
-                rows.AddRow(CreateStepRow(state.SelectedObjectId.Value, step));
+                rows.Items.Add(CreateStepRow(state.SelectedObjectId.Value, state.Steps[i]));
             }
         }
 
-        rows.Add(null);
         _rowsScrollable.Content = rows;
     }
 
@@ -342,12 +383,13 @@ public sealed class ModifierStackPanel : Panel
             Wrap = WrapMode.Word,
         };
 
-        var errorLabel = new Label
+        var editButton = new Button
         {
-            Text = step.ErrorMessage,
-            TextColor = Eto.Drawing.Colors.OrangeRed,
-            Wrap = WrapMode.Word,
+            Text = "Edit",
+            ToolTip = "Open this modifier definition in Grasshopper.",
+            Enabled = !string.IsNullOrWhiteSpace(step.FullPath),
         };
+        editButton.Click += (_, _) => EditStepDefinition(step.FullPath);
 
         var upButton = new Button
         {
@@ -381,12 +423,14 @@ public sealed class ModifierStackPanel : Panel
             }
         };
 
-        var rowLayout = new DynamicLayout
+        var content = new StackLayout
         {
-            Padding = 6,
-            Spacing = new Eto.Drawing.Size(6, 4),
+            Orientation = Orientation.Vertical,
+            Spacing = 6,
+            Padding = new Eto.Drawing.Padding(2, 4),
         };
-        rowLayout.AddRow(new StackLayout
+
+        content.Items.Add(new StackLayout
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
@@ -394,6 +438,7 @@ public sealed class ModifierStackPanel : Panel
             {
                 enabledCheckBox,
                 new StackLayoutItem(pathLabel, true),
+                editButton,
                 upButton,
                 downButton,
                 removeButton,
@@ -402,40 +447,30 @@ public sealed class ModifierStackPanel : Panel
 
         if (!string.IsNullOrWhiteSpace(step.ErrorMessage))
         {
-            rowLayout.AddRow(errorLabel);
+            content.Items.Add(new Label
+            {
+                Text = step.ErrorMessage,
+                TextColor = Eto.Drawing.Colors.OrangeRed,
+                Wrap = WrapMode.Word,
+            });
         }
 
-        if (step.Inputs.Count > 0)
+        foreach (var input in step.Inputs)
         {
-            rowLayout.AddRow(new Label
-            {
-                Text = "Inputs",
-            });
-
-            foreach (var input in step.Inputs)
-            {
-                rowLayout.AddRow(CreateInputRow(objectId, step, input));
-            }
+            content.Items.Add(CreateInputRow(objectId, step, input));
         }
 
         if (step.Outputs.Count > 0)
         {
-            rowLayout.AddRow(new Label
-            {
-                Text = "Outputs",
-            });
-
-            foreach (var output in step.Outputs)
-            {
-                rowLayout.AddRow(CreateOutputRow(output));
-            }
+            content.Items.Add(CreateOutputSummaryRow(step.Outputs));
         }
 
         return new Panel
         {
-            Content = rowLayout,
+            Content = content,
         };
     }
+
     private void AddStepFromImportedDefinition(ModifierPanelState state, string path)
     {
         var doc = RhinoDoc.ActiveDoc;
@@ -463,217 +498,423 @@ public sealed class ModifierStackPanel : Panel
 
         RefreshView();
     }
+
     private Control CreateInputRow(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
     {
-        var layout = new DynamicLayout
+        var editor = CreateInputEditor(objectId, step, input);
+        var toolTip = BuildInputToolTip(input);
+        SetToolTip(editor, toolTip);
+
+        if (!input.IsMissingRequiredValue)
+        {
+            return CreateFormRow(input.Label, editor, toolTip);
+        }
+
+        var content = new DynamicLayout
         {
             Padding = 0,
             Spacing = new Eto.Drawing.Size(4, 2),
         };
-
-        Control editor;
-        switch (input.Kind)
+        content.AddRow(editor);
+        content.AddRow(new Label
         {
-            case ModifierIoKind.Boolean:
-                var boolEditor = new CheckBox
-                {
-                    Checked = bool.TryParse(input.SerializedValue, out var boolValue) && boolValue,
-                    Enabled = step.Enabled && !input.IsReadOnly,
-                    Text = input.Label,
-                };
-                boolEditor.CheckedChanged += (_, _) => CommitInput(objectId, step.Index, input, boolEditor.Checked == true ? "true" : "false");
-                editor = boolEditor;
-                break;
-
-            case ModifierIoKind.NumberSlider:
-                var sliderEditor = new NumericStepper
-                {
-                    DecimalPlaces = input.DecimalPlaces,
-                    Increment = GetIncrement(input.DecimalPlaces),
-                    Enabled = step.Enabled && !input.IsReadOnly,
-                };
-                if (input.Minimum.HasValue)
-                {
-                    sliderEditor.MinValue = input.Minimum.Value;
-                }
-
-                if (input.Maximum.HasValue)
-                {
-                    sliderEditor.MaxValue = input.Maximum.Value;
-                }
-
-                sliderEditor.Value = TryParseNumber(input.SerializedValue, out var numericValue)
-                    ? numericValue
-                    : input.Minimum ?? 0d;
-                sliderEditor.ValueChanged += (_, _) => CommitInput(
-                    objectId,
-                    step.Index,
-                    input,
-                    sliderEditor.Value.ToString(CultureInfo.InvariantCulture));
-                editor = WrapLabeledEditor(input.Label, sliderEditor);
-                break;
-
-            case ModifierIoKind.Geometry:
-                var valueText = string.IsNullOrWhiteSpace(input.SerializedValue)
-                    ? "(scene geometry by default)"
-                    : input.SerializedValue;
-
-                var geometryValue = new TextBox
-                {
-                    Text = valueText,
-                    ReadOnly = true,
-                    Enabled = true,
-                };
-
-                var pickGeometryButton = new Button
-                {
-                    Text = "Pick geometry",
-                    Enabled = step.Enabled && !input.IsReadOnly,
-                };
-                pickGeometryButton.Click += (_, _) =>
-                {
-                    var doc = RhinoDoc.ActiveDoc;
-                    if (doc is null)
-                    {
-                        return;
-                    }
-
-                    var previousSelection = doc.Objects.GetSelectedObjects(false, false)?.Select(o => o.Id).ToArray() ?? Array.Empty<Guid>();
-                    doc.Objects.UnselectAll();
-
-                    var rc = RhinoGet.GetMultipleObjects("Select geometry for input", false, Rhino.DocObjects.ObjectType.AnyObject, out var objRefs);
-                    if (rc != Rhino.Commands.Result.Success || objRefs is null || objRefs.Length == 0)
-                    {
-                        if (previousSelection.Length > 0)
-                        {
-                            doc.Objects.UnselectAll();
-                            foreach (var id in previousSelection)
-                            {
-                                doc.Objects.Select(id, true);
-                            }
-                        }
-                        return;
-                    }
-
-                    var ids = string.Join(" ", objRefs.Select(r => r.ObjectId.ToString()));
-                    if (!HelloRhinoCommonPlugin.Instance.Engine.SetStepInputValue(doc, objectId, step.Index, input.Id, ids, out var message))
-                    {
-                        MessageBox.Show(message, MessageBoxType.Error);
-                        if (previousSelection.Length > 0)
-                        {
-                            doc.Objects.UnselectAll();
-                            foreach (var id in previousSelection)
-                            {
-                                doc.Objects.Select(id, true);
-                            }
-                        }
-                        return;
-                    }
-
-                    geometryValue.Text = ids;
-                    if (!string.IsNullOrWhiteSpace(message))
-                    {
-                        RhinoApp.WriteLine(message);
-                    }
-
-                    if (previousSelection.Length > 0)
-                    {
-                        doc.Objects.UnselectAll();
-                        foreach (var id in previousSelection)
-                        {
-                            doc.Objects.Select(id, true);
-                        }
-                    }
-
-                    RefreshView();
-                };
-
-                editor = new DynamicLayout
-                {
-                    Padding = 0,
-                    Spacing = new Eto.Drawing.Size(4, 2),
-                    Rows =
-                    {
-                        new StackLayout
-                        {
-                            Orientation = Orientation.Horizontal,
-                            Spacing = 6,
-                            Items =
-                            {
-                                geometryValue,
-                                pickGeometryButton,
-                            },
-                        },
-                    },
-                };
-                break;
-
-            default:
-                var textEditor = new TextBox
-                {
-                    Text = input.SerializedValue,
-                    ReadOnly = input.IsReadOnly,
-                    Enabled = step.Enabled && !input.IsReadOnly,
-                };
-                textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
-                editor = WrapLabeledEditor(input.Label, textEditor);
-                break;
-        }
-
-        layout.AddRow(editor);
-        if (!string.IsNullOrWhiteSpace(input.Description))
-        {
-            layout.AddRow(new Label
-            {
-                Text = input.Description,
-                Wrap = WrapMode.Word,
-                TextColor = Eto.Drawing.Colors.Gray,
-            });
-        }
-
-        return new Panel
-        {
-            Content = layout,
-        };
-    }
-
-    private static Control CreateOutputRow(ModifierStepOutputPanelState output)
-    {
-        var layout = new DynamicLayout
-        {
-            Padding = 0,
-            Spacing = new Eto.Drawing.Size(4, 2),
-        };
-
-        layout.AddRow(new Label
-        {
-            Text = $"{output.Label}: {output.DisplayValue}",
+            Text = input.ValidationMessage,
             Wrap = WrapMode.Word,
-            ToolTip = output.Description,
+            TextColor = Eto.Drawing.Colors.OrangeRed,
         });
 
-        return new Panel
+        return CreateFormRow(input.Label, content, toolTip, isWarning: true);
+    }
+
+    private Control CreateInputEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        return GetEditorKind(input) switch
         {
-            Content = layout,
+            InputEditorKind.Toggle => CreateToggleEditor(objectId, step, input),
+            InputEditorKind.Slider => CreateSliderEditor(objectId, step, input),
+            InputEditorKind.Number => CreateNumericEditor(objectId, step, input),
+            InputEditorKind.Point => CreatePointEditor(objectId, step, input),
+            InputEditorKind.Geometry => CreateGeometryEditor(objectId, step, input),
+            _ => CreateTextEditor(objectId, step, input),
         };
     }
 
-    private static Control WrapLabeledEditor(string label, Control editor)
+    private static InputEditorKind GetEditorKind(ModifierStepInputPanelState input)
     {
-        return new DynamicLayout
+        return input.Kind switch
         {
-            Padding = 0,
-            Spacing = new Eto.Drawing.Size(4, 2),
-            Rows =
+            ModifierIoKind.Boolean => InputEditorKind.Toggle,
+            ModifierIoKind.NumberSlider => InputEditorKind.Slider,
+            ModifierIoKind.Number when input.Minimum.HasValue && input.Maximum.HasValue => InputEditorKind.Slider,
+            ModifierIoKind.Number => InputEditorKind.Number,
+            ModifierIoKind.Point => InputEditorKind.Point,
+            ModifierIoKind.Geometry => InputEditorKind.Geometry,
+            _ => InputEditorKind.Text,
+        };
+    }
+
+    private static Control CreateToggleEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var toggle = new CheckBox
+        {
+            Checked = bool.TryParse(input.SerializedValue, out var boolValue) && boolValue,
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        toggle.CheckedChanged += (_, _) => CommitInput(
+            objectId,
+            step.Index,
+            input,
+            toggle.Checked == true ? "true" : "false");
+
+        return toggle;
+    }
+
+    private static Control CreateSliderEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        if (!TryCreateSliderConfiguration(input, out var configuration))
+        {
+            return CreateNumericEditor(objectId, step, input);
+        }
+
+        var initialValue = configuration.GetValue(configuration.GetSliderValue(GetInitialNumericValue(input)));
+        var lastCommittedValue = SerializeNumber(initialValue, input.DecimalPlaces);
+        var toolTip = AppendToolTip(
+            BuildInputToolTip(input),
+            $"{FormatDisplayNumber(configuration.Minimum, input.DecimalPlaces)} to {FormatDisplayNumber(configuration.Maximum, input.DecimalPlaces)}");
+
+        var slider = new Slider
+        {
+            MinValue = 0,
+            MaxValue = configuration.Steps,
+            Value = configuration.GetSliderValue(initialValue),
+            Enabled = IsInputEnabled(step, input),
+            ToolTip = toolTip,
+        };
+
+        var valueEditor = new NumericStepper
+        {
+            DecimalPlaces = input.DecimalPlaces,
+            Increment = GetIncrement(input.DecimalPlaces),
+            MinValue = configuration.Minimum,
+            MaxValue = configuration.Maximum,
+            Value = initialValue,
+            Width = SliderValueWidth,
+            Enabled = IsInputEnabled(step, input),
+            ToolTip = toolTip,
+        };
+
+        var isUpdating = false;
+
+        void CommitSliderValue(double actualValue)
+        {
+            var serializedValue = SerializeNumber(actualValue, input.DecimalPlaces);
+            if (string.Equals(serializedValue, lastCommittedValue, StringComparison.Ordinal))
             {
-                new Label
+                return;
+            }
+
+            lastCommittedValue = serializedValue;
+            CommitInput(objectId, step.Index, input, serializedValue);
+        }
+
+        void SyncSliderValue(bool commit)
+        {
+            if (isUpdating)
+            {
+                return;
+            }
+
+            isUpdating = true;
+            try
+            {
+                var actualValue = configuration.GetValue(slider.Value);
+                valueEditor.Value = actualValue;
+                if (commit)
                 {
-                    Text = label,
-                    Wrap = WrapMode.Word,
-                },
-                editor,
+                    CommitSliderValue(actualValue);
+                }
+            }
+            finally
+            {
+                isUpdating = false;
+            }
+        }
+
+        slider.ValueChanged += (_, _) => SyncSliderValue(commit: false);
+        slider.MouseUp += (_, _) => SyncSliderValue(commit: true);
+        slider.LostFocus += (_, _) => SyncSliderValue(commit: true);
+
+        valueEditor.ValueChanged += (_, _) =>
+        {
+            if (isUpdating)
+            {
+                return;
+            }
+
+            isUpdating = true;
+            try
+            {
+                var actualValue = RoundNumber(valueEditor.Value, input.DecimalPlaces);
+                slider.Value = configuration.GetSliderValue(actualValue);
+                valueEditor.Value = actualValue;
+                CommitSliderValue(actualValue);
+            }
+            finally
+            {
+                isUpdating = false;
+            }
+        };
+
+        return new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items =
+            {
+                new StackLayoutItem(slider, true),
+                valueEditor,
             },
         };
+    }
+
+    private static Control CreateNumericEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var numericEditor = new NumericStepper
+        {
+            DecimalPlaces = input.DecimalPlaces,
+            Increment = GetIncrement(input.DecimalPlaces),
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        if (input.Minimum.HasValue)
+        {
+            numericEditor.MinValue = input.Minimum.Value;
+        }
+
+        if (input.Maximum.HasValue)
+        {
+            numericEditor.MaxValue = input.Maximum.Value;
+        }
+
+        numericEditor.Value = GetInitialNumericValue(input);
+
+        numericEditor.ValueChanged += (_, _) => CommitInput(
+            objectId,
+            step.Index,
+            input,
+            SerializeNumber(numericEditor.Value, input.DecimalPlaces));
+
+        return numericEditor;
+    }
+
+    private static Control CreateTextEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var textEditor = new TextBox
+        {
+            Text = input.SerializedValue,
+            ReadOnly = input.IsReadOnly,
+            Enabled = IsInputEnabled(step, input),
+        };
+        textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
+        return textEditor;
+    }
+
+    private static Control CreatePointEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var pointValue = new TextBox
+        {
+            Text = GetPointDisplayText(input.SerializedValue),
+            ReadOnly = true,
+            Enabled = true,
+        };
+
+        var pickPointButton = new Button
+        {
+            Text = "Set point",
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        pickPointButton.Click += (_, _) =>
+        {
+            var doc = RhinoDoc.ActiveDoc;
+            if (doc is null)
+            {
+                return;
+            }
+
+            Point3d point;
+            if (!TryGetSelectedPoint(doc, objectId, out point))
+            {
+                var rc = RhinoGet.GetPoint("Set point input", false, out point);
+                if (rc != Rhino.Commands.Result.Success)
+                {
+                    return;
+                }
+            }
+
+            var serializedValue = SerializePoint(point);
+            if (!HelloRhinoCommonPlugin.Instance.Engine.SetStepInputValue(doc, objectId, step.Index, input.Id, serializedValue, out var message))
+            {
+                MessageBox.Show(message, MessageBoxType.Error);
+                return;
+            }
+
+            pointValue.Text = serializedValue;
+            if (!string.IsNullOrWhiteSpace(message))
+            {
+                RhinoApp.WriteLine(message);
+            }
+        };
+
+        return CreatePickerEditor(pointValue, pickPointButton);
+    }
+
+    private static Control CreateGeometryEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var geometryValue = new TextBox
+        {
+            Text = GetGeometryDisplayText(input.SerializedValue),
+            ReadOnly = true,
+            Enabled = true,
+        };
+
+        var pickGeometryButton = new Button
+        {
+            Text = "Pick geometry",
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        pickGeometryButton.Click += (_, _) =>
+        {
+            var doc = RhinoDoc.ActiveDoc;
+            if (doc is null)
+            {
+                return;
+            }
+
+            var previousSelection = GetSelectedObjectIds(doc);
+            try
+            {
+                doc.Objects.UnselectAll();
+                var rc = RhinoGet.GetMultipleObjects("Select geometry for input", false, Rhino.DocObjects.ObjectType.AnyObject, out var objRefs);
+                if (rc != Rhino.Commands.Result.Success || objRefs is null || objRefs.Length == 0)
+                {
+                    return;
+                }
+
+                var ids = string.Join(" ", objRefs.Select(r => r.ObjectId.ToString()));
+                if (!HelloRhinoCommonPlugin.Instance.Engine.SetStepInputValue(doc, objectId, step.Index, input.Id, ids, out var message))
+                {
+                    MessageBox.Show(message, MessageBoxType.Error);
+                    return;
+                }
+
+                geometryValue.Text = ids;
+                if (!string.IsNullOrWhiteSpace(message))
+                {
+                    RhinoApp.WriteLine(message);
+                }
+            }
+            finally
+            {
+                RestoreSelection(doc, previousSelection);
+            }
+        };
+
+        return CreatePickerEditor(geometryValue, pickGeometryButton);
+    }
+
+    private static Control CreatePickerEditor(TextBox valueBox, Button actionButton)
+    {
+        return new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items =
+            {
+                new StackLayoutItem(valueBox, true),
+                actionButton,
+            },
+        };
+    }
+
+    private static Control CreateOutputSummaryRow(IReadOnlyList<ModifierStepOutputPanelState> outputs)
+    {
+        var summary = new Label
+        {
+            Text = string.Join("   ", outputs.Select(output => $"{output.Label}: {output.DisplayValue}")),
+            Wrap = WrapMode.Word,
+        };
+        var toolTip = BuildOutputToolTip(outputs);
+        SetToolTip(summary, toolTip);
+
+        return CreateFormRow("Outputs", summary, toolTip);
+    }
+
+    private static Control CreateFormRow(string label, Control editor, string? toolTip = null, bool isWarning = false)
+    {
+        return new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 8,
+            Items =
+            {
+                CreateFieldLabel(label, toolTip, isWarning),
+                new StackLayoutItem(editor, true),
+            },
+        };
+    }
+
+    private static Label CreateFieldLabel(string label, string? toolTip, bool isWarning = false)
+    {
+        return new Label
+        {
+            Text = label,
+            Width = FieldLabelWidth,
+            Wrap = WrapMode.Word,
+            ToolTip = toolTip,
+            TextColor = isWarning ? Eto.Drawing.Colors.OrangeRed : Eto.Drawing.Colors.Black,
+        };
+    }
+
+    private static void SetToolTip(Control control, string? toolTip)
+    {
+        if (!string.IsNullOrWhiteSpace(toolTip))
+        {
+            control.ToolTip = toolTip;
+        }
+    }
+
+    private static string? BuildInputToolTip(ModifierStepInputPanelState input)
+    {
+        return string.IsNullOrWhiteSpace(input.Description)
+            ? null
+            : input.Description;
+    }
+
+    private static string? BuildOutputToolTip(IReadOnlyList<ModifierStepOutputPanelState> outputs)
+    {
+        var descriptions = outputs
+            .Where(output => !string.IsNullOrWhiteSpace(output.Description))
+            .Select(output => $"{output.Label}: {output.Description}")
+            .ToArray();
+
+        return descriptions.Length == 0
+            ? null
+            : string.Join(Environment.NewLine, descriptions);
+    }
+
+    private static string? AppendToolTip(string? baseToolTip, string suffix)
+    {
+        if (string.IsNullOrWhiteSpace(baseToolTip))
+        {
+            return string.IsNullOrWhiteSpace(suffix) ? null : suffix;
+        }
+
+        return string.IsNullOrWhiteSpace(suffix)
+            ? baseToolTip
+            : $"{baseToolTip}{Environment.NewLine}{suffix}";
     }
 
     private static double GetIncrement(int decimalPlaces)
@@ -681,6 +922,116 @@ public sealed class ModifierStackPanel : Panel
         return decimalPlaces <= 0
             ? 1d
             : Math.Pow(10d, -decimalPlaces);
+    }
+
+    private static bool IsInputEnabled(ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        return step.Enabled && !input.IsReadOnly;
+    }
+
+    private static Guid[] GetSelectedObjectIds(RhinoDoc doc)
+    {
+        return doc.Objects.GetSelectedObjects(false, false)?.Select(candidate => candidate.Id).ToArray() ?? Array.Empty<Guid>();
+    }
+
+    private static void RestoreSelection(RhinoDoc doc, IEnumerable<Guid> objectIds)
+    {
+        doc.Objects.UnselectAll();
+        foreach (var objectId in objectIds)
+        {
+            doc.Objects.Select(objectId, true);
+        }
+    }
+
+    private static bool TryGetSelectedPoint(RhinoDoc doc, Guid objectId, out Point3d point)
+    {
+        point = Point3d.Unset;
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject?.Geometry is not Rhino.Geometry.Point pointGeometry)
+        {
+            return false;
+        }
+
+        point = pointGeometry.Location;
+        return true;
+    }
+
+    private static string GetPointDisplayText(string serializedValue)
+    {
+        return string.IsNullOrWhiteSpace(serializedValue)
+            ? "(not set)"
+            : serializedValue;
+    }
+
+    private static string GetGeometryDisplayText(string serializedValue)
+    {
+        return string.IsNullOrWhiteSpace(serializedValue)
+            ? "(scene geometry by default)"
+            : serializedValue;
+    }
+
+    private static bool TryCreateSliderConfiguration(ModifierStepInputPanelState input, out NumericSliderConfiguration configuration)
+    {
+        configuration = default;
+        if (!input.Minimum.HasValue || !input.Maximum.HasValue)
+        {
+            return false;
+        }
+
+        var minimum = input.Minimum.Value;
+        var maximum = input.Maximum.Value;
+        if (maximum < minimum)
+        {
+            (minimum, maximum) = (maximum, minimum);
+        }
+
+        if (Math.Abs(maximum - minimum) < double.Epsilon)
+        {
+            maximum = minimum + GetIncrement(input.DecimalPlaces);
+        }
+
+        var rawSteps = (maximum - minimum) / GetIncrement(input.DecimalPlaces);
+        var steps = rawSteps > 0d
+            ? (int)Math.Min(MaxSliderResolution, Math.Ceiling(rawSteps))
+            : 1;
+
+        configuration = new NumericSliderConfiguration(minimum, maximum, Math.Max(1, steps), input.DecimalPlaces);
+        return true;
+    }
+
+    private static double GetInitialNumericValue(ModifierStepInputPanelState input)
+    {
+        return TryParseNumber(input.SerializedValue, out var numericValue)
+            ? numericValue
+            : input.Minimum ?? 0d;
+    }
+
+    private static double RoundNumber(double value, int decimalPlaces)
+    {
+        return decimalPlaces <= 0
+            ? Math.Round(value, 0, MidpointRounding.AwayFromZero)
+            : Math.Round(value, decimalPlaces, MidpointRounding.AwayFromZero);
+    }
+
+    private static string SerializeNumber(double value, int decimalPlaces)
+    {
+        var roundedValue = RoundNumber(value, decimalPlaces);
+        return decimalPlaces <= 0
+            ? roundedValue.ToString("0", CultureInfo.InvariantCulture)
+            : roundedValue.ToString($"F{decimalPlaces}", CultureInfo.InvariantCulture);
+    }
+
+    private static string SerializePoint(Point3d point)
+    {
+        return FormattableString.Invariant($"{point.X:0.###############},{point.Y:0.###############},{point.Z:0.###############}");
+    }
+
+    private static string FormatDisplayNumber(double value, int decimalPlaces)
+    {
+        var serialized = SerializeNumber(value, decimalPlaces);
+        return decimalPlaces <= 0
+            ? serialized
+            : serialized.TrimEnd('0').TrimEnd('.');
     }
 
     private static bool TryParseNumber(string value, out double number)
@@ -717,6 +1068,20 @@ public sealed class ModifierStackPanel : Panel
         }
 
         HelloRhinoCommonPlugin.Instance.Engine.MoveStep(doc, objectId, index, offset, out var message);
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            RhinoApp.WriteLine(message);
+        }
+    }
+
+    private static void EditStepDefinition(string path)
+    {
+        if (!HelloRhinoCommonPlugin.Instance.Engine.OpenModifierDefinitionInGrasshopper(path, out var message))
+        {
+            MessageBox.Show(message, MessageBoxType.Error);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(message))
         {
             RhinoApp.WriteLine(message);

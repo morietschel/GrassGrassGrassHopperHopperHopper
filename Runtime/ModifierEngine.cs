@@ -85,6 +85,19 @@ internal sealed class ModifierEngine : IDisposable
             {
                 inputs = BuildInputPanelState(step, contract).ToArray();
                 outputs = BuildOutputPanelState(runtime?.GetOutputsForIndex(i), contract).ToArray();
+
+                if (string.IsNullOrWhiteSpace(stepError))
+                {
+                    var missingLabels = inputs
+                        .Where(input => input.IsMissingRequiredValue)
+                        .Select(input => input.Label)
+                        .ToArray();
+
+                    if (missingLabels.Length > 0)
+                    {
+                        stepError = FormatMissingRequiredInputs(missingLabels);
+                    }
+                }
             }
             else if (string.IsNullOrWhiteSpace(stepError))
             {
@@ -201,6 +214,56 @@ internal sealed class ModifierEngine : IDisposable
         message = $"Added modifier: {Path.GetFileName(path)}";
         Log($"{message} StackCount={spec.Steps.Count}");
         return true;
+    }
+
+    public bool OpenModifierDefinitionInGrasshopper(string path, out string message)
+    {
+        message = string.Empty;
+
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            message = "Modifier path is empty.";
+            Log(message);
+            return false;
+        }
+
+        var fullPath = Path.GetFullPath(path);
+        Log($"OpenModifierDefinitionInGrasshopper requested. Path={fullPath}");
+        if (!File.Exists(fullPath))
+        {
+            message = $"Modifier file not found: {fullPath}";
+            Log(message);
+            return false;
+        }
+
+        if (RhinoApp.GetPlugInObject("Grasshopper") is not Grasshopper.Plugin.GH_RhinoScriptInterface grasshopper)
+        {
+            message = "Grasshopper is not available for document editing.";
+            Log(message);
+            return false;
+        }
+
+        try
+        {
+            grasshopper.ShowEditor();
+            var document = Grasshopper.Instances.DocumentServer.AddDocument(fullPath, true);
+            if (document is null)
+            {
+                message = $"Failed to open modifier in Grasshopper: {Path.GetFileName(fullPath)}";
+                Log(message);
+                return false;
+            }
+
+            message = $"Opened modifier in Grasshopper: {Path.GetFileName(fullPath)}. Save the Grasshopper file, then refresh the stack to apply changes.";
+            Log(message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            message = $"Failed to open modifier in Grasshopper: {ex.Message}";
+            Log($"{message} Path={fullPath}");
+            return false;
+        }
     }
 
     public bool RemoveStep(RhinoDoc doc, Guid objectId, int index, out string message)
@@ -744,6 +807,14 @@ internal sealed class ModifierEngine : IDisposable
 
     private static StepEvaluationResult EvaluateStep(RhinoDoc doc, StepRuntime runtime, ModifierStepSpec stepSpec, IReadOnlyList<GeometryBase> inputGeometry)
     {
+        var missingInputs = GetMissingRequiredInputs(stepSpec, runtime.Contract.Inputs)
+            .Select(input => input.Label)
+            .ToArray();
+        if (missingInputs.Length > 0)
+        {
+            return StepEvaluationResult.Fail(FormatMissingRequiredInputs(missingInputs));
+        }
+
         if (runtime.SceneInputSource is not null)
         {
             if (!TryAppendGeometry(runtime.SceneInputSource, inputGeometry, out var error))
@@ -849,24 +920,28 @@ internal sealed class ModifierEngine : IDisposable
     {
         foreach (var input in contract.Inputs)
         {
-            var serializedValue = stepSpec.InputValues.TryGetValue(input.Id, out var storedValue)
-                ? storedValue
-                : input.HasDefaultValue
-                    ? input.DefaultSerializedValue
-                    : string.Empty;
+            var serializedValue = GetDisplayedInputValue(stepSpec, input);
+            var isMissingRequiredValue = IsMissingRequiredInput(stepSpec, input);
 
             yield return new ModifierStepInputPanelState
             {
                 Id = input.Id,
                 Label = input.Label,
-                Description = input.Kind == ModifierIoKind.Geometry
-                    ? AppendDescription(input.Description, "Blank uses the current stack geometry. Paste Rhino object IDs or `self` to override.")
-                    : input.Description,
+                Description = input.Kind switch
+                {
+                    ModifierIoKind.Geometry => AppendDescription(input.Description, "Blank uses the current stack geometry. Paste Rhino object IDs or `self` to override."),
+                    ModifierIoKind.Point => AppendDescription(input.Description, "Click Set point to use the selected point object or pick one in Rhino."),
+                    _ => input.Description,
+                },
                 Kind = input.Kind,
                 SerializedValue = serializedValue,
                 Minimum = input.Minimum,
                 Maximum = input.Maximum,
                 DecimalPlaces = input.DecimalPlaces,
+                IsMissingRequiredValue = isMissingRequiredValue,
+                ValidationMessage = isMissingRequiredValue
+                    ? $"Set '{input.Label}' to run this modifier."
+                    : string.Empty,
             };
         }
     }
@@ -978,7 +1053,7 @@ internal sealed class ModifierEngine : IDisposable
             throw new InvalidOperationException("Legacy scene geometry input must be unwired.");
         }
 
-        return CreateParamInputDescriptor(param, ModifierIoKind.Geometry, hasDefaultValue: false, defaultSerializedValue: string.Empty, usesSceneGeometryWhenBlank: true, minimum: null, maximum: null, decimalPlaces: 0);
+        return CreateParamInputDescriptor(param, ModifierIoKind.Geometry, hasDefaultValue: false, defaultSerializedValue: string.Empty, usesSceneGeometryWhenBlank: true, isOptional: false, minimum: null, maximum: null, decimalPlaces: 0);
     }
 
     private static ModifierOutputDescriptor? FindLegacyGeometryOutput(GH_Document document, HashSet<Guid> groupedOutputIds)
@@ -1010,6 +1085,7 @@ internal sealed class ModifierEngine : IDisposable
                 SerializeNumber(slider.CurrentValue),
                 true,
                 false,
+                false,
                 (double)slider.Slider.Minimum,
                 (double)slider.Slider.Maximum,
                 slider.Slider.Type == GH_SliderAccuracy.Float ? slider.Slider.DecimalPlaces : 0);
@@ -1034,10 +1110,21 @@ internal sealed class ModifierEngine : IDisposable
             hasDefaultValue,
             defaultSerializedValue,
             usesSceneGeometryWhenBlank: kind == ModifierIoKind.Geometry,
+            isOptional: param.Optional,
             minimum: null,
             maximum: null,
-            decimalPlaces: kind == ModifierIoKind.Number ? 3 : 0);
+            decimalPlaces: GetDefaultDecimalPlaces(param, kind));
         return true;
+    }
+
+    private static int GetDefaultDecimalPlaces(IGH_Param param, ModifierIoKind kind)
+    {
+        if (kind != ModifierIoKind.Number)
+        {
+            return 0;
+        }
+
+        return param is Param_Integer ? 0 : 3;
     }
 
     private static bool TryCreateOutputDescriptor(IGH_DocumentObject documentObject, out ModifierOutputDescriptor? descriptor)
@@ -1058,6 +1145,7 @@ internal sealed class ModifierEngine : IDisposable
         bool hasDefaultValue,
         string defaultSerializedValue,
         bool usesSceneGeometryWhenBlank,
+        bool isOptional,
         double? minimum,
         double? maximum,
         int decimalPlaces)
@@ -1071,6 +1159,7 @@ internal sealed class ModifierEngine : IDisposable
             defaultSerializedValue,
             hasDefaultValue,
             usesSceneGeometryWhenBlank,
+            isOptional,
             minimum,
             maximum,
             decimalPlaces);
@@ -1186,11 +1275,11 @@ internal sealed class ModifierEngine : IDisposable
     private static bool ApplyInputBinding(RhinoDoc doc, RuntimeInputBinding binding, ModifierStepSpec stepSpec, IReadOnlyList<GeometryBase> currentGeometry, out string error)
     {
         error = string.Empty;
-        var hasValue = TryGetEffectiveInputValue(stepSpec, binding.Descriptor, out var serializedValue);
+        var hasExplicitValue = TryGetExplicitInputValue(stepSpec, binding.Descriptor, out var serializedValue);
 
         if (binding.Slider is not null)
         {
-            if (!hasValue)
+            if (!hasExplicitValue)
             {
                 return true;
             }
@@ -1215,8 +1304,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ClearParamData(binding.Param);
-        if (!hasValue)
+        if (!hasExplicitValue)
         {
             if (binding.Descriptor.UsesSceneGeometryWhenBlank)
             {
@@ -1226,6 +1314,7 @@ internal sealed class ModifierEngine : IDisposable
             return true;
         }
 
+        ClearParamData(binding.Param);
         switch (binding.Descriptor.Kind)
         {
             case ModifierIoKind.Number:
@@ -1300,16 +1389,63 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
-    private static bool TryGetEffectiveInputValue(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor, out string serializedValue)
+    private static bool TryGetExplicitInputValue(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor, out string serializedValue)
     {
         if (stepSpec.InputValues.TryGetValue(descriptor.Id, out var storedValue))
         {
-            serializedValue = storedValue ?? string.Empty;
-            return true;
+            serializedValue = storedValue?.Trim() ?? string.Empty;
+            return !string.IsNullOrWhiteSpace(serializedValue);
         }
 
-        serializedValue = descriptor.DefaultSerializedValue;
-        return descriptor.HasDefaultValue;
+        serializedValue = string.Empty;
+        return false;
+    }
+
+    private static string GetDisplayedInputValue(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor)
+    {
+        if (TryGetExplicitInputValue(stepSpec, descriptor, out var serializedValue))
+        {
+            return serializedValue;
+        }
+
+        return descriptor.HasDefaultValue
+            ? descriptor.DefaultSerializedValue
+            : string.Empty;
+    }
+
+    private static bool IsMissingRequiredInput(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor)
+    {
+        if (descriptor.IsOptional || descriptor.UsesSceneGeometryWhenBlank)
+        {
+            return false;
+        }
+
+        if (TryGetExplicitInputValue(stepSpec, descriptor, out _))
+        {
+            return false;
+        }
+
+        return !descriptor.HasDefaultValue;
+    }
+
+    private static IEnumerable<ModifierInputDescriptor> GetMissingRequiredInputs(ModifierStepSpec stepSpec, IEnumerable<ModifierInputDescriptor> descriptors)
+    {
+        return descriptors.Where(descriptor => IsMissingRequiredInput(stepSpec, descriptor));
+    }
+
+    private static string FormatMissingRequiredInputs(IEnumerable<string> labels)
+    {
+        var missingLabels = labels
+            .Where(label => !string.IsNullOrWhiteSpace(label))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+
+        if (missingLabels.Length == 0)
+        {
+            return "Required inputs are missing.";
+        }
+
+        return $"Missing required inputs: {string.Join(", ", missingLabels)}.";
     }
 
     private static void ClearParamData(IGH_Param param)
@@ -2102,6 +2238,7 @@ internal sealed class ModifierEngine : IDisposable
         string DefaultSerializedValue,
         bool HasDefaultValue,
         bool UsesSceneGeometryWhenBlank,
+        bool IsOptional,
         double? Minimum,
         double? Maximum,
         int DecimalPlaces);
