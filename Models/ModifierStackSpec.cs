@@ -6,7 +6,7 @@ internal sealed class ModifierStackSpec
 {
     internal const string UserDictionaryKey = "GGH.ModifierStack.v1";
 
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
 
     public List<ModifierStepSpec> Steps { get; set; } = new();
 
@@ -32,12 +32,21 @@ internal sealed class ModifierStepSpec
 
     public bool Enabled { get; set; } = true;
 
+    public Dictionary<string, string> InputValues { get; set; } = new();
+
     public ModifierStepSpec Clone()
     {
-        return new ModifierStepSpec
+        var clone = new ModifierStepSpec
         {
             Path = Path,
             Enabled = Enabled,
         };
+
+        foreach (var pair in InputValues)
+        {
+            clone.InputValues[pair.Key] = pair.Value;
+        }
+
+        return clone;
     }
 }

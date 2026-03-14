@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Runtime.InteropServices;
 using Eto.Forms;
 using HelloRhinoCommon.Models;
@@ -283,10 +284,186 @@ public sealed class ModifierStackPanel : Panel
             rowLayout.AddRow(errorLabel);
         }
 
+        if (step.Inputs.Count > 0)
+        {
+            rowLayout.AddRow(new Label
+            {
+                Text = "Inputs",
+            });
+
+            foreach (var input in step.Inputs)
+            {
+                rowLayout.AddRow(CreateInputRow(objectId, step, input));
+            }
+        }
+
+        if (step.Outputs.Count > 0)
+        {
+            rowLayout.AddRow(new Label
+            {
+                Text = "Outputs",
+            });
+
+            foreach (var output in step.Outputs)
+            {
+                rowLayout.AddRow(CreateOutputRow(output));
+            }
+        }
+
         return new Panel
         {
             Content = rowLayout,
         };
+    }
+
+    private Control CreateInputRow(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var layout = new DynamicLayout
+        {
+            Padding = 0,
+            Spacing = new Eto.Drawing.Size(4, 2),
+        };
+
+        Control editor;
+        switch (input.Kind)
+        {
+            case ModifierIoKind.Boolean:
+                var boolEditor = new CheckBox
+                {
+                    Checked = bool.TryParse(input.SerializedValue, out var boolValue) && boolValue,
+                    Enabled = step.Enabled && !input.IsReadOnly,
+                    Text = input.Label,
+                };
+                boolEditor.CheckedChanged += (_, _) => CommitInput(objectId, step.Index, input, boolEditor.Checked == true ? "true" : "false");
+                editor = boolEditor;
+                break;
+
+            case ModifierIoKind.NumberSlider:
+                var sliderEditor = new NumericStepper
+                {
+                    DecimalPlaces = input.DecimalPlaces,
+                    Increment = GetIncrement(input.DecimalPlaces),
+                    Enabled = step.Enabled && !input.IsReadOnly,
+                };
+                if (input.Minimum.HasValue)
+                {
+                    sliderEditor.MinValue = input.Minimum.Value;
+                }
+
+                if (input.Maximum.HasValue)
+                {
+                    sliderEditor.MaxValue = input.Maximum.Value;
+                }
+
+                sliderEditor.Value = TryParseNumber(input.SerializedValue, out var numericValue)
+                    ? numericValue
+                    : input.Minimum ?? 0d;
+                sliderEditor.ValueChanged += (_, _) => CommitInput(
+                    objectId,
+                    step.Index,
+                    input,
+                    sliderEditor.Value.ToString(CultureInfo.InvariantCulture));
+                editor = WrapLabeledEditor(input.Label, sliderEditor);
+                break;
+
+            default:
+                var textEditor = new TextBox
+                {
+                    Text = input.SerializedValue,
+                    ReadOnly = input.IsReadOnly,
+                    Enabled = step.Enabled && !input.IsReadOnly,
+                };
+                textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
+                editor = WrapLabeledEditor(input.Label, textEditor);
+                break;
+        }
+
+        layout.AddRow(editor);
+        if (!string.IsNullOrWhiteSpace(input.Description))
+        {
+            layout.AddRow(new Label
+            {
+                Text = input.Description,
+                Wrap = WrapMode.Word,
+                TextColor = Eto.Drawing.Colors.Gray,
+            });
+        }
+
+        return new Panel
+        {
+            Content = layout,
+        };
+    }
+
+    private static Control CreateOutputRow(ModifierStepOutputPanelState output)
+    {
+        var layout = new DynamicLayout
+        {
+            Padding = 0,
+            Spacing = new Eto.Drawing.Size(4, 2),
+        };
+
+        layout.AddRow(new Label
+        {
+            Text = $"{output.Label}: {output.DisplayValue}",
+            Wrap = WrapMode.Word,
+            ToolTip = output.Description,
+        });
+
+        return new Panel
+        {
+            Content = layout,
+        };
+    }
+
+    private static Control WrapLabeledEditor(string label, Control editor)
+    {
+        return new DynamicLayout
+        {
+            Padding = 0,
+            Spacing = new Eto.Drawing.Size(4, 2),
+            Rows =
+            {
+                new Label
+                {
+                    Text = label,
+                    Wrap = WrapMode.Word,
+                },
+                editor,
+            },
+        };
+    }
+
+    private static double GetIncrement(int decimalPlaces)
+    {
+        return decimalPlaces <= 0
+            ? 1d
+            : Math.Pow(10d, -decimalPlaces);
+    }
+
+    private static bool TryParseNumber(string value, out double number)
+    {
+        return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out number);
+    }
+
+    private static void CommitInput(Guid objectId, int stepIndex, ModifierStepInputPanelState input, string value)
+    {
+        var doc = RhinoDoc.ActiveDoc;
+        if (doc is null)
+        {
+            return;
+        }
+
+        if (!HelloRhinoCommonPlugin.Instance.Engine.SetStepInputValue(doc, objectId, stepIndex, input.Id, value, out var message))
+        {
+            MessageBox.Show(message, MessageBoxType.Error);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            RhinoApp.WriteLine(message);
+        }
     }
 
     private static void MoveStep(Guid objectId, int index, int offset)

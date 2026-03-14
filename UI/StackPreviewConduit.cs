@@ -1,7 +1,7 @@
-using System.Collections.Generic;
 using System.Drawing;
 using Rhino;
 using Rhino.Display;
+using Rhino.DocObjects;
 using Rhino.Geometry;
 
 namespace HelloRhinoCommon.UI;
@@ -9,11 +9,6 @@ namespace HelloRhinoCommon.UI;
 internal sealed class StackPreviewConduit : DisplayConduit
 {
     private static readonly Color PreviewColor = Color.OrangeRed;
-    private static readonly DisplayMaterial PreviewMaterial = new DisplayMaterial
-    {
-        Diffuse = Color.FromArgb(90, 255, 99, 71),
-        BackDiffuse = Color.FromArgb(90, 255, 99, 71),
-    };
     private readonly HelloRhinoCommon.Runtime.ModifierEngine _engine;
 
     public StackPreviewConduit(HelloRhinoCommon.Runtime.ModifierEngine engine)
@@ -23,41 +18,62 @@ internal sealed class StackPreviewConduit : DisplayConduit
 
     protected override void CalculateBoundingBox(CalculateBoundingBoxEventArgs e)
     {
-        foreach (var geometry in _engine.GetPreviewGeometry(RhinoDoc.ActiveDoc))
+        foreach (var stack in _engine.GetPreviewStacks(RhinoDoc.ActiveDoc))
         {
-            e.IncludeBoundingBox(geometry.GetBoundingBox(true));
+            foreach (var geometry in stack.Geometry)
+            {
+                e.IncludeBoundingBox(geometry.GetBoundingBox(true));
+            }
         }
     }
 
     protected override void PostDrawObjects(DrawEventArgs e)
     {
-        foreach (var geometry in _engine.GetPreviewGeometry(e.RhinoDoc))
+        foreach (var stack in _engine.GetPreviewStacks(e.RhinoDoc))
         {
-            DrawGeometry(e.Display, geometry);
+            var sourceObject = e.RhinoDoc.Objects.FindId(stack.SourceObjectId);
+            var drawColor = GetPreviewColor(e.RhinoDoc, sourceObject);
+            using var material = CreatePreviewMaterial(sourceObject, drawColor);
+
+            foreach (var geometry in stack.Geometry)
+            {
+                DrawGeometry(e.Display, geometry, drawColor, material);
+            }
         }
     }
 
-    private static void DrawGeometry(DisplayPipeline display, GeometryBase geometry)
+    private static Color GetPreviewColor(RhinoDoc doc, RhinoObject? sourceObject)
+    {
+        return sourceObject?.Attributes.DrawColor(doc) ?? PreviewColor;
+    }
+
+    private static DisplayMaterial CreatePreviewMaterial(RhinoObject? sourceObject, Color fallbackColor)
+    {
+        var sourceMaterial = sourceObject?.GetMaterial(true);
+        return sourceMaterial is null ? new DisplayMaterial(fallbackColor) : new DisplayMaterial(sourceMaterial);
+    }
+
+    private static void DrawGeometry(DisplayPipeline display, GeometryBase geometry, Color drawColor, DisplayMaterial material)
     {
         switch (geometry)
         {
             case Rhino.Geometry.Point point:
-                display.DrawPoint(point.Location, PointStyle.Simple, 4, PreviewColor);
+                display.DrawPoint(point.Location, PointStyle.Simple, 4, drawColor);
                 break;
             case Curve curve:
-                display.DrawCurve(curve, PreviewColor, 2);
+                display.DrawCurve(curve, drawColor, 2);
                 break;
             case Brep brep:
-                display.DrawBrepShaded(brep, PreviewMaterial);
-                display.DrawBrepWires(brep, PreviewColor, 1);
+                display.DrawBrepShaded(brep, material);
+                display.DrawBrepWires(brep, drawColor, 1);
                 break;
             case Mesh mesh:
-                display.DrawMeshShaded(mesh, PreviewMaterial);
-                display.DrawMeshWires(mesh, PreviewColor);
+                display.DrawMeshShaded(mesh, material);
+                display.DrawMeshWires(mesh, drawColor);
                 break;
             case SubD subD:
-                display.DrawSubDShaded(subD, PreviewMaterial);
-                display.DrawSubDWires(subD, PreviewColor, 1);
+                display.DrawSubDShaded(subD, material);
+                display.DrawSubDWires(subD, drawColor, 1);
                 break;
         }
     }
