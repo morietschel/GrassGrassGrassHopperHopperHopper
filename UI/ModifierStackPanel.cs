@@ -2,10 +2,12 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using Eto.Forms;
 using HelloRhinoCommon.Models;
 using Rhino;
+using Rhino.Input;
 using Rhino.UI;
 
 namespace HelloRhinoCommon.UI;
@@ -509,6 +511,101 @@ public sealed class ModifierStackPanel : Panel
                     input,
                     sliderEditor.Value.ToString(CultureInfo.InvariantCulture));
                 editor = WrapLabeledEditor(input.Label, sliderEditor);
+                break;
+
+            case ModifierIoKind.Geometry:
+                var valueText = string.IsNullOrWhiteSpace(input.SerializedValue)
+                    ? "(scene geometry by default)"
+                    : input.SerializedValue;
+
+                var geometryValue = new TextBox
+                {
+                    Text = valueText,
+                    ReadOnly = true,
+                    Enabled = true,
+                };
+
+                var pickGeometryButton = new Button
+                {
+                    Text = "Pick geometry",
+                    Enabled = step.Enabled && !input.IsReadOnly,
+                };
+                pickGeometryButton.Click += (_, _) =>
+                {
+                    var doc = RhinoDoc.ActiveDoc;
+                    if (doc is null)
+                    {
+                        return;
+                    }
+
+                    var previousSelection = doc.Objects.GetSelectedObjects(false, false)?.Select(o => o.Id).ToArray() ?? Array.Empty<Guid>();
+                    doc.Objects.UnselectAll();
+
+                    var rc = RhinoGet.GetMultipleObjects("Select geometry for input", false, Rhino.DocObjects.ObjectType.AnyObject, out var objRefs);
+                    if (rc != Rhino.Commands.Result.Success || objRefs is null || objRefs.Length == 0)
+                    {
+                        if (previousSelection.Length > 0)
+                        {
+                            doc.Objects.UnselectAll();
+                            foreach (var id in previousSelection)
+                            {
+                                doc.Objects.Select(id, true);
+                            }
+                        }
+                        return;
+                    }
+
+                    var ids = string.Join(" ", objRefs.Select(r => r.ObjectId.ToString()));
+                    if (!HelloRhinoCommonPlugin.Instance.Engine.SetStepInputValue(doc, objectId, step.Index, input.Id, ids, out var message))
+                    {
+                        MessageBox.Show(message, MessageBoxType.Error);
+                        if (previousSelection.Length > 0)
+                        {
+                            doc.Objects.UnselectAll();
+                            foreach (var id in previousSelection)
+                            {
+                                doc.Objects.Select(id, true);
+                            }
+                        }
+                        return;
+                    }
+
+                    geometryValue.Text = ids;
+                    if (!string.IsNullOrWhiteSpace(message))
+                    {
+                        RhinoApp.WriteLine(message);
+                    }
+
+                    if (previousSelection.Length > 0)
+                    {
+                        doc.Objects.UnselectAll();
+                        foreach (var id in previousSelection)
+                        {
+                            doc.Objects.Select(id, true);
+                        }
+                    }
+
+                    RefreshView();
+                };
+
+                editor = new DynamicLayout
+                {
+                    Padding = 0,
+                    Spacing = new Eto.Drawing.Size(4, 2),
+                    Rows =
+                    {
+                        new StackLayout
+                        {
+                            Orientation = Orientation.Horizontal,
+                            Spacing = 6,
+                            Items =
+                            {
+                                geometryValue,
+                                pickGeometryButton,
+                            },
+                        },
+                    },
+                };
                 break;
 
             default:
