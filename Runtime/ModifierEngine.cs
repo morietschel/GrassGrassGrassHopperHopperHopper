@@ -2903,6 +2903,7 @@ internal sealed class ModifierEngine : IDisposable
 
         var runtime = GetOrCreateStackRuntime(doc, objectId);
         runtime.EnsureStepCapacity(spec.Steps.Count);
+        var publishedOutputsByStepId = new Dictionary<Guid, IReadOnlyList<StepOutputValue>>();
 
         for (var i = 0; i <= stepIndex; i++)
         {
@@ -3222,7 +3223,6 @@ internal sealed class ModifierEngine : IDisposable
         return rhinoObject is null
             ? objectId.ToString("D")
             : $"{rhinoObject.ObjectType} {rhinoObject.Id}";
-    }
     }
 
     private void ResetStackRuntime(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
