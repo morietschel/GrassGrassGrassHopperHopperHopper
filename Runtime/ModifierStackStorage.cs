@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using HelloRhinoCommon.Models;
 using Rhino;
@@ -33,7 +34,9 @@ internal static class ModifierStackStorage
 
         try
         {
-            return JsonSerializer.Deserialize<ModifierStackSpec>(json, JsonOptions) ?? new ModifierStackSpec();
+            var spec = JsonSerializer.Deserialize<ModifierStackSpec>(json, JsonOptions) ?? new ModifierStackSpec();
+            Normalize(spec);
+            return spec;
         }
         catch
         {
@@ -61,5 +64,24 @@ internal static class ModifierStackStorage
         }
 
         return doc.Objects.ModifyAttributes(rhinoObject, attributes, true);
+    }
+
+    private static void Normalize(ModifierStackSpec spec)
+    {
+        spec.Version = Math.Max(spec.Version, 4);
+        spec.Steps ??= new List<ModifierStepSpec>();
+
+        var seenStepIds = new HashSet<Guid>();
+        foreach (var step in spec.Steps)
+        {
+            step.InputValues ??= new Dictionary<string, string>();
+            step.InputLinks ??= new Dictionary<string, ModifierInputLinkSpec>();
+
+            if (step.StepId == Guid.Empty || !seenStepIds.Add(step.StepId))
+            {
+                step.StepId = Guid.NewGuid();
+                seenStepIds.Add(step.StepId);
+            }
+        }
     }
 }

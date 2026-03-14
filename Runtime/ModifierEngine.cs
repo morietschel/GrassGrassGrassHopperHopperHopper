@@ -72,19 +72,31 @@ internal sealed class ModifierEngine : IDisposable
 
         var spec = ModifierStackStorage.Load(rhinoObject);
         var runtime = TryGetStackRuntime(doc, rhinoObject!.Id);
-        var steps = new List<ModifierStepPanelState>(spec.Steps.Count);
-
+        var stepContexts = new List<PanelStepContext>(spec.Steps.Count);
         for (var i = 0; i < spec.Steps.Count; i++)
         {
             var step = spec.Steps[i];
-            var stepError = runtime?.GetErrorForIndex(i) ?? string.Empty;
+            var displayName = Path.GetFileName(step.Path);
+            if (TryGetDefinitionContract(step.Path, out var contract, out var contractError))
+            {
+                stepContexts.Add(new PanelStepContext(i, step, displayName, contract, string.Empty));
+                continue;
+            }
+
+            stepContexts.Add(new PanelStepContext(i, step, displayName, null, contractError));
+        }
+
+        var steps = new List<ModifierStepPanelState>(spec.Steps.Count);
+        foreach (var stepContext in stepContexts)
+        {
+            var stepError = runtime?.GetErrorForIndex(stepContext.Index) ?? string.Empty;
             var inputs = Array.Empty<ModifierStepInputPanelState>();
             var outputs = Array.Empty<ModifierStepOutputPanelState>();
 
-            if (TryGetDefinitionContract(step.Path, out var contract, out var contractError))
+            if (stepContext.Contract is not null)
             {
-                inputs = BuildInputPanelState(step, contract).ToArray();
-                outputs = BuildOutputPanelState(runtime?.GetOutputsForIndex(i), contract).ToArray();
+                inputs = BuildInputPanelState(doc, rhinoObject.Id, stepContexts, stepContext, runtime).ToArray();
+                outputs = BuildOutputPanelState(runtime?.GetOutputsForIndex(stepContext.Index), stepContext.Contract).ToArray();
 
                 if (string.IsNullOrWhiteSpace(stepError))
                 {
@@ -101,15 +113,16 @@ internal sealed class ModifierEngine : IDisposable
             }
             else if (string.IsNullOrWhiteSpace(stepError))
             {
-                stepError = contractError;
+                stepError = stepContext.ContractError;
             }
 
             steps.Add(new ModifierStepPanelState
             {
-                Index = i,
-                Enabled = step.Enabled,
-                FullPath = step.Path,
-                DisplayName = Path.GetFileName(step.Path),
+                Index = stepContext.Index,
+                StepId = stepContext.Step.StepId,
+                Enabled = stepContext.Step.Enabled,
+                FullPath = stepContext.Step.Path,
+                DisplayName = stepContext.DisplayName,
                 ErrorMessage = stepError,
                 Inputs = inputs,
                 Outputs = outputs,
@@ -356,6 +369,12 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         spec.Steps[index].Enabled = enabled;
+        if (enabled && !TryValidateObjectPreviewGraph(doc, objectId, spec, out message))
+        {
+            Log(message);
+            return false;
+        }
+
         if (!ModifierStackStorage.Save(doc, objectId, spec))
         {
             message = "Failed to update the modifier stack.";
@@ -399,6 +418,106 @@ internal sealed class ModifierEngine : IDisposable
 
         ResetStackRuntime(doc, objectId, spec);
         message = "Updated modifier input.";
+        Log(message);
+        return true;
+    }
+
+    public bool SetStepInputLink(RhinoDoc doc, Guid objectId, int index, string inputId, Guid sourceStepId, string sourceOutputId, out string message)
+    {
+        message = string.Empty;
+        Log($"SetStepInputLink requested. Object={objectId}, Index={index}, Input={inputId}, SourceStep={sourceStepId}, SourceOutput={sourceOutputId}");
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            message = "Selected object no longer exists.";
+            Log(message);
+            return false;
+        }
+
+        var spec = ModifierStackStorage.Load(rhinoObject);
+        if (!TryValidateInputLink(spec, index, inputId, sourceStepId, sourceOutputId, out var linkSpec, out message))
+        {
+            Log(message);
+            return false;
+        }
+
+        spec.Steps[index].InputLinks[inputId] = linkSpec;
+        if (!ModifierStackStorage.Save(doc, objectId, spec))
+        {
+            message = "Failed to update the modifier input link.";
+            Log(message);
+            return false;
+        }
+
+        ResetStackRuntime(doc, objectId, spec);
+        message = "Updated modifier input link.";
+        Log(message);
+        return true;
+    }
+
+    public bool SetStepInputObjectPreviewLink(RhinoDoc doc, Guid objectId, int index, string inputId, Guid sourceObjectId, out string message)
+    {
+        message = string.Empty;
+        Log($"SetStepInputObjectPreviewLink requested. Object={objectId}, Index={index}, Input={inputId}, SourceObject={sourceObjectId}");
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            message = "Selected object no longer exists.";
+            Log(message);
+            return false;
+        }
+
+        var spec = ModifierStackStorage.Load(rhinoObject);
+        if (!TryValidateObjectPreviewInputLink(doc, objectId, spec, index, inputId, sourceObjectId, out var linkSpec, out message))
+        {
+            Log(message);
+            return false;
+        }
+
+        spec.Steps[index].InputLinks[inputId] = linkSpec;
+        if (!ModifierStackStorage.Save(doc, objectId, spec))
+        {
+            message = "Failed to update the modifier input link.";
+            Log(message);
+            return false;
+        }
+
+        ResetStackRuntime(doc, objectId, spec);
+        message = "Updated modifier input link.";
+        Log(message);
+        return true;
+    }
+
+    public bool ClearStepInputLink(RhinoDoc doc, Guid objectId, int index, string inputId, out string message)
+    {
+        message = string.Empty;
+        Log($"ClearStepInputLink requested. Object={objectId}, Index={index}, Input={inputId}");
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            message = "Selected object no longer exists.";
+            Log(message);
+            return false;
+        }
+
+        var spec = ModifierStackStorage.Load(rhinoObject);
+        if (index < 0 || index >= spec.Steps.Count)
+        {
+            message = "Step index is out of range.";
+            Log(message);
+            return false;
+        }
+
+        spec.Steps[index].InputLinks.Remove(inputId);
+        if (!ModifierStackStorage.Save(doc, objectId, spec))
+        {
+            message = "Failed to clear the modifier input link.";
+            Log(message);
+            return false;
+        }
+
+        ResetStackRuntime(doc, objectId, spec);
+        message = "Cleared modifier input link.";
         Log(message);
         return true;
     }
@@ -589,11 +708,34 @@ internal sealed class ModifierEngine : IDisposable
         runtime.ClearErrors(spec.Steps.Count);
         runtime.ClearAllOutputs(spec.Steps.Count);
 
+        if (TryGetObjectPreviewCycleError(doc, objectId, spec, out var cycleError))
+        {
+            runtime.PreviewGeometry.Clear();
+            runtime.SetError(-1, cycleError);
+            runtime.HasEvaluated = true;
+            MarkObjectClean(doc, objectId);
+            Log($"EvaluateStack aborted. Object={objectId}. {cycleError}");
+            QueueDependentEvaluations(doc, objectId);
+            UpdateConduitAndViews(doc);
+            RaiseStateChanged();
+            return;
+        }
+
+        if (!TryPrepareObjectPreviewDependencies(doc, objectId, spec, out var waitingReason))
+        {
+            Log($"EvaluateStack deferred. Object={objectId}. {waitingReason}");
+            QueueEvaluation(doc, objectId);
+            return;
+        }
+
         if (!GeometryConversion.TryGetSourceGeometry(rhinoObject.Geometry, out var currentGeometry, out var sourceError))
         {
             runtime.PreviewGeometry.Clear();
             runtime.SetError(-1, sourceError);
+            runtime.HasEvaluated = true;
+            MarkObjectClean(doc, objectId);
             Log($"Source geometry conversion failed. Object={objectId}. {sourceError}");
+            QueueDependentEvaluations(doc, objectId);
             UpdateConduitAndViews(doc);
             RaiseStateChanged();
             return;
@@ -605,6 +747,7 @@ internal sealed class ModifierEngine : IDisposable
         var anyStepSucceeded = false;
         var failedAtFirstEnabledStep = false;
         var firstEnabledIndex = spec.Steps.FindIndex(step => step.Enabled);
+        var publishedOutputsByStepId = new Dictionary<Guid, IReadOnlyList<StepOutputValue>>();
         Log($"Stack evaluation entering step loop. RootRevision={runtime.RootRevision}, FirstEnabledIndex={firstEnabledIndex}");
 
         for (var i = 0; i < spec.Steps.Count; i++)
@@ -615,6 +758,7 @@ internal sealed class ModifierEngine : IDisposable
                 Log($"Step {i} disabled. Disposing any existing runtime and skipping.");
                 runtime.DisposeStep(i);
                 runtime.ClearOutputs(i);
+                publishedOutputsByStepId.Remove(stepSpec.StepId);
                 continue;
             }
 
@@ -634,7 +778,8 @@ internal sealed class ModifierEngine : IDisposable
             if (stepRuntime.LastInputRevision == upstreamRevision)
             {
                 Log($"Step {i} cache hit. Modifier={Path.GetFileName(stepSpec.Path)}, InputRevision={upstreamRevision}, CachedOutputCount={stepRuntime.CachedOutput.Count}");
-                runtime.SetOutputs(i, stepRuntime.CachedDisplayedOutputs);
+                runtime.SetOutputs(i, stepRuntime.CachedPublishedOutputs);
+                publishedOutputsByStepId[stepSpec.StepId] = stepRuntime.CachedPublishedOutputs;
                 if (stepRuntime.HasGeometryOutputs)
                 {
                     currentGeometry = CloneGeometry(stepRuntime.CachedOutput);
@@ -646,23 +791,23 @@ internal sealed class ModifierEngine : IDisposable
             }
 
             Log($"Step {i} solving. Modifier={Path.GetFileName(stepSpec.Path)}, InputRevision={upstreamRevision}, InputCount={currentGeometry.Count}, InputSummary={DescribeGeometry(currentGeometry)}");
-            var result = EvaluateStep(doc, stepRuntime, stepSpec, currentGeometry);
+            var result = EvaluateStep(doc, stepRuntime, stepSpec, i, spec.Steps, publishedOutputsByStepId, currentGeometry);
             if (!result.Success)
             {
                 runtime.SetError(i, result.ErrorMessage);
                 runtime.ClearOutputs(i);
+                publishedOutputsByStepId.Remove(stepSpec.StepId);
                 Log($"Step {i} solve failed for '{Path.GetFileName(stepSpec.Path)}'. {result.ErrorMessage}");
                 failedAtFirstEnabledStep = i == firstEnabledIndex;
                 break;
             }
 
             stepRuntime.CachedOutput = result.OutputGeometry;
-            stepRuntime.CachedDisplayedOutputs = result.DisplayOutputs;
+            stepRuntime.CachedPublishedOutputs = result.PublishedOutputs;
             stepRuntime.LastInputRevision = upstreamRevision;
-            stepRuntime.LastOutputRevision = result.HasGeometryOutput
-                ? NextRevision()
-                : upstreamRevision;
-            runtime.SetOutputs(i, result.DisplayOutputs);
+            stepRuntime.LastOutputRevision = NextRevision();
+            runtime.SetOutputs(i, result.PublishedOutputs);
+            publishedOutputsByStepId[stepSpec.StepId] = result.PublishedOutputs;
             if (result.HasGeometryOutput)
             {
                 currentGeometry = CloneGeometry(stepRuntime.CachedOutput);
@@ -680,6 +825,8 @@ internal sealed class ModifierEngine : IDisposable
         runtime.PreviewGeometry = failedAtFirstEnabledStep && !anyStepSucceeded
             ? new List<GeometryBase>()
             : CloneGeometry(currentGeometry);
+        runtime.HasEvaluated = true;
+        MarkObjectClean(doc, objectId);
 
         if (runtime.PreviewGeometry.Count == 0 && string.IsNullOrWhiteSpace(runtime.ErrorMessage))
         {
@@ -687,6 +834,7 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         Log($"EvaluateStack finished. Object={objectId}, PreviewCount={runtime.PreviewGeometry.Count}, PreviewSummary={DescribeGeometry(runtime.PreviewGeometry)}, Error='{runtime.ErrorMessage}'");
+        QueueDependentEvaluations(doc, objectId);
         UpdateConduitAndViews(doc);
         RaiseStateChanged();
     }
@@ -805,7 +953,14 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
-    private static StepEvaluationResult EvaluateStep(RhinoDoc doc, StepRuntime runtime, ModifierStepSpec stepSpec, IReadOnlyList<GeometryBase> inputGeometry)
+    private StepEvaluationResult EvaluateStep(
+        RhinoDoc doc,
+        StepRuntime runtime,
+        ModifierStepSpec stepSpec,
+        int stepIndex,
+        IReadOnlyList<ModifierStepSpec> allSteps,
+        IReadOnlyDictionary<Guid, IReadOnlyList<StepOutputValue>> publishedOutputsByStepId,
+        IReadOnlyList<GeometryBase> inputGeometry)
     {
         var missingInputs = GetMissingRequiredInputs(stepSpec, runtime.Contract.Inputs)
             .Select(input => input.Label)
@@ -825,7 +980,7 @@ internal sealed class ModifierEngine : IDisposable
 
         foreach (var binding in runtime.Inputs)
         {
-            if (!ApplyInputBinding(doc, binding, stepSpec, inputGeometry, out var error))
+            if (!ApplyInputBinding(doc, binding, stepSpec, stepIndex, allSteps, publishedOutputsByStepId, inputGeometry, out var error))
             {
                 return StepEvaluationResult.Fail(error);
             }
@@ -855,7 +1010,7 @@ internal sealed class ModifierEngine : IDisposable
         {
             binding.Param.CollectData();
             binding.Param.ComputeData();
-            outputValues.Add(new StepOutputValue(binding.Descriptor.Id, FormatOutputValue(binding.Descriptor, binding.Param)));
+            outputValues.Add(CapturePublishedOutput(binding.Descriptor, binding.Param));
         }
 
         if (runtime.GeometryOutputs.Count == 0)
@@ -872,7 +1027,7 @@ internal sealed class ModifierEngine : IDisposable
             binding.Param.ComputeData();
 
             var output = GeometryConversion.ReadOutput(binding.Param);
-            geometry.AddRange(output.Geometry);
+            geometry.AddRange(CloneGeometry(output.Geometry));
             skipped.AddRange(output.SkippedTypes);
             totalRawItemCount += output.TotalItemCount;
         }
@@ -916,12 +1071,21 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
-    private static IEnumerable<ModifierStepInputPanelState> BuildInputPanelState(ModifierStepSpec stepSpec, DefinitionContract contract)
+    private IEnumerable<ModifierStepInputPanelState> BuildInputPanelState(
+        RhinoDoc doc,
+        Guid objectId,
+        IReadOnlyList<PanelStepContext> stepContexts,
+        PanelStepContext currentStepContext,
+        StackRuntime? runtime)
     {
+        var contract = currentStepContext.Contract!;
         foreach (var input in contract.Inputs)
         {
-            var serializedValue = GetDisplayedInputValue(stepSpec, input);
-            var isMissingRequiredValue = IsMissingRequiredInput(stepSpec, input);
+            var serializedValue = GetDisplayedInputValue(currentStepContext.Step, input);
+            var isMissingRequiredValue = IsMissingRequiredInput(currentStepContext.Step, input);
+            var linkState = BuildLinkPresentationState(doc, objectId, stepContexts, currentStepContext, input, runtime);
+            var (showModifiedGeometryToggle, useModifiedGeometry, modifiedGeometrySourceObjectId) =
+                GetModifiedGeometryToggleState(doc, currentStepContext.Step, input);
 
             yield return new ModifierStepInputPanelState
             {
@@ -929,7 +1093,7 @@ internal sealed class ModifierEngine : IDisposable
                 Label = input.Label,
                 Description = input.Kind switch
                 {
-                    ModifierIoKind.Geometry => AppendDescription(input.Description, "Blank uses the current stack geometry. Paste Rhino object IDs or `self` to override."),
+                    ModifierIoKind.Geometry => AppendDescription(input.Description, "Blank uses the current stack geometry. Paste Rhino object IDs or `self` to override. When a single referenced object has its own modifiers, a checkbox lets you use its modified result instead of the base geometry."),
                     ModifierIoKind.Point => AppendDescription(input.Description, "Click Set point to use the selected point object or pick one in Rhino."),
                     _ => input.Description,
                 },
@@ -938,10 +1102,20 @@ internal sealed class ModifierEngine : IDisposable
                 Minimum = input.Minimum,
                 Maximum = input.Maximum,
                 DecimalPlaces = input.DecimalPlaces,
+                IsReadOnly = linkState.HasLink,
+                HasLink = linkState.HasLink,
+                IsLinkBroken = linkState.IsBroken,
+                LinkSourceStepLabel = linkState.SourceStepLabel,
+                LinkSourceOutputLabel = linkState.SourceOutputLabel,
+                LinkStatusMessage = linkState.StatusMessage,
+                AvailableLinks = BuildAvailableLinkOptions(stepContexts, currentStepContext, input, runtime).ToArray(),
                 IsMissingRequiredValue = isMissingRequiredValue,
                 ValidationMessage = isMissingRequiredValue
                     ? $"Set '{input.Label}' to run this modifier."
                     : string.Empty,
+                ShowModifiedGeometryToggle = showModifiedGeometryToggle,
+                UseModifiedGeometry = useModifiedGeometry,
+                ModifiedGeometrySourceObjectId = modifiedGeometrySourceObjectId,
             };
         }
     }
@@ -963,6 +1137,404 @@ internal sealed class ModifierEngine : IDisposable
                 DisplayValue = displayValue ?? string.Empty,
             };
         }
+    }
+
+    private static (bool ShowToggle, bool UseModifiedGeometry, Guid? SourceObjectId) GetModifiedGeometryToggleState(
+        RhinoDoc doc,
+        ModifierStepSpec stepSpec,
+        ModifierInputDescriptor input)
+    {
+        if (input.Kind != ModifierIoKind.Geometry)
+        {
+            return (false, false, null);
+        }
+
+        if (TryGetStepOutputInputLink(stepSpec, input.Id, out _))
+        {
+            return (false, false, null);
+        }
+
+        if (TryGetObjectPreviewInputLink(stepSpec, input.Id, out var objectPreviewLink))
+        {
+            return (true, true, objectPreviewLink.SourceObjectId);
+        }
+
+        if (!TryGetExplicitInputValue(stepSpec, input, out var serializedValue) ||
+            !TryGetSingleReferencedObjectId(serializedValue, out var sourceObjectId))
+        {
+            return (false, false, null);
+        }
+
+        return DoesObjectHaveModifierStack(doc, sourceObjectId)
+            ? (true, false, sourceObjectId)
+            : (false, false, null);
+    }
+
+    private bool TryValidateInputLink(
+        ModifierStackSpec spec,
+        int targetIndex,
+        string inputId,
+        Guid sourceStepId,
+        string sourceOutputId,
+        out ModifierInputLinkSpec linkSpec,
+        out string message)
+    {
+        linkSpec = null!;
+        message = string.Empty;
+        if (targetIndex < 0 || targetIndex >= spec.Steps.Count)
+        {
+            message = "Step index is out of range.";
+            return false;
+        }
+
+        var sourceIndex = spec.Steps.FindIndex(step => step.StepId == sourceStepId);
+        if (sourceIndex < 0)
+        {
+            message = "The linked source modifier no longer exists.";
+            return false;
+        }
+
+        if (sourceIndex >= targetIndex)
+        {
+            message = "The linked source modifier must be earlier in the stack.";
+            return false;
+        }
+
+        var targetStep = spec.Steps[targetIndex];
+        if (!TryGetDefinitionContract(targetStep.Path, out var targetContract, out var targetError))
+        {
+            message = targetError;
+            return false;
+        }
+
+        var targetInput = targetContract.Inputs.FirstOrDefault(input => input.Id.Equals(inputId, StringComparison.Ordinal));
+        if (targetInput is null)
+        {
+            message = "The selected input is no longer available on this modifier.";
+            return false;
+        }
+
+        var sourceStep = spec.Steps[sourceIndex];
+        if (!sourceStep.Enabled)
+        {
+            message = "The linked source modifier is disabled.";
+            return false;
+        }
+
+        if (!TryGetDefinitionContract(sourceStep.Path, out var sourceContract, out var sourceError))
+        {
+            message = sourceError;
+            return false;
+        }
+
+        var sourceOutput = sourceContract.Outputs.FirstOrDefault(output => output.Id.Equals(sourceOutputId, StringComparison.Ordinal));
+        if (sourceOutput is null)
+        {
+            message = "The selected output is no longer available on the source modifier.";
+            return false;
+        }
+
+        if (!AreKindsLinkCompatible(targetInput.Kind, sourceOutput.Kind))
+        {
+            message = $"Output '{sourceOutput.Label}' is not compatible with input '{targetInput.Label}'.";
+            return false;
+        }
+
+        linkSpec = new ModifierInputLinkSpec
+        {
+            SourceStepId = sourceStepId,
+            SourceOutputId = sourceOutputId,
+            SourceStepLabel = Path.GetFileName(sourceStep.Path),
+            SourceOutputLabel = sourceOutput.Label,
+        };
+        return true;
+    }
+
+    private bool TryValidateObjectPreviewInputLink(
+        RhinoDoc doc,
+        Guid targetObjectId,
+        ModifierStackSpec spec,
+        int targetIndex,
+        string inputId,
+        Guid sourceObjectId,
+        out ModifierInputLinkSpec linkSpec,
+        out string message)
+    {
+        linkSpec = null!;
+        message = string.Empty;
+        if (targetIndex < 0 || targetIndex >= spec.Steps.Count)
+        {
+            message = "Step index is out of range.";
+            return false;
+        }
+
+        if (sourceObjectId == Guid.Empty)
+        {
+            message = "Pick an object to use its modified result.";
+            return false;
+        }
+
+        if (sourceObjectId == targetObjectId)
+        {
+            message = "A modifier input cannot reference the modified result of the same object.";
+            return false;
+        }
+
+        var targetStep = spec.Steps[targetIndex];
+        if (!TryGetDefinitionContract(targetStep.Path, out var targetContract, out var targetError))
+        {
+            message = targetError;
+            return false;
+        }
+
+        var targetInput = targetContract.Inputs.FirstOrDefault(input => input.Id.Equals(inputId, StringComparison.Ordinal));
+        if (targetInput is null)
+        {
+            message = "The selected input is no longer available on this modifier.";
+            return false;
+        }
+
+        if (targetInput.Kind != ModifierIoKind.Geometry)
+        {
+            message = $"Input '{targetInput.Label}' does not support modified-geometry references.";
+            return false;
+        }
+
+        var sourceRhinoObject = doc.Objects.FindId(sourceObjectId);
+        if (sourceRhinoObject is null)
+        {
+            message = "The selected source object no longer exists.";
+            return false;
+        }
+
+        var sourceSpec = ModifierStackStorage.Load(sourceRhinoObject);
+        if (sourceSpec.Steps.Count == 0)
+        {
+            message = "The selected source object does not have any modifiers.";
+            return false;
+        }
+
+        var candidateSpec = spec.Clone();
+        candidateSpec.Steps[targetIndex].InputLinks[inputId] = new ModifierInputLinkSpec
+        {
+            SourceKind = ModifierInputLinkSourceKind.ObjectPreview,
+            SourceObjectId = sourceObjectId,
+            SourceObjectLabel = DescribeLinkedObject(sourceRhinoObject),
+        };
+
+        if (!TryValidateObjectPreviewGraph(doc, targetObjectId, candidateSpec, out message))
+        {
+            return false;
+        }
+
+        linkSpec = new ModifierInputLinkSpec
+        {
+            SourceKind = ModifierInputLinkSourceKind.ObjectPreview,
+            SourceObjectId = sourceObjectId,
+            SourceObjectLabel = DescribeLinkedObject(sourceRhinoObject),
+        };
+        return true;
+    }
+
+    private bool TryValidateObjectPreviewGraph(RhinoDoc doc, Guid objectId, ModifierStackSpec spec, out string message)
+    {
+        message = string.Empty;
+        if (!TryGetObjectPreviewCyclePath(doc, objectId, GetActiveObjectPreviewDependencies(spec), out var cyclePath))
+        {
+            return true;
+        }
+
+        message = $"Circular modified-geometry reference detected: {FormatObjectPreviewCycle(doc, cyclePath)}.";
+        return false;
+    }
+
+    private static IEnumerable<ModifierInputLinkOptionPanelState> BuildAvailableLinkOptions(
+        IReadOnlyList<PanelStepContext> stepContexts,
+        PanelStepContext currentStepContext,
+        ModifierInputDescriptor input,
+        StackRuntime? runtime)
+    {
+        for (var i = 0; i < currentStepContext.Index; i++)
+        {
+            var sourceStepContext = stepContexts[i];
+            if (!sourceStepContext.Step.Enabled || sourceStepContext.Contract is null)
+            {
+                continue;
+            }
+
+            var runtimeOutputs = runtime?.GetOutputsForIndex(sourceStepContext.Index);
+            foreach (var output in sourceStepContext.Contract.Outputs)
+            {
+                if (!AreKindsLinkCompatible(input.Kind, output.Kind))
+                {
+                    continue;
+                }
+
+                var hasRuntimeValue = TryGetStepOutputValue(runtimeOutputs, output.Id, out var runtimeOutput);
+                yield return new ModifierInputLinkOptionPanelState
+                {
+                    SourceStepId = sourceStepContext.Step.StepId,
+                    SourceStepIndex = sourceStepContext.Index,
+                    SourceStepLabel = sourceStepContext.DisplayName,
+                    SourceOutputId = output.Id,
+                    SourceOutputLabel = output.Label,
+                    Kind = output.Kind,
+                    HasRuntimeValue = hasRuntimeValue,
+                    RuntimeDisplayValue = hasRuntimeValue ? runtimeOutput.DisplayValue : string.Empty,
+                    IsSelected = TryGetStepOutputInputLink(currentStepContext.Step, input.Id, out var activeLink) &&
+                        activeLink.SourceStepId == sourceStepContext.Step.StepId &&
+                        activeLink.SourceOutputId.Equals(output.Id, StringComparison.Ordinal),
+                };
+            }
+        }
+    }
+
+    private LinkPresentationState BuildLinkPresentationState(
+        RhinoDoc doc,
+        Guid objectId,
+        IReadOnlyList<PanelStepContext> stepContexts,
+        PanelStepContext currentStepContext,
+        ModifierInputDescriptor input,
+        StackRuntime? runtime)
+    {
+        if (!TryGetInputLink(currentStepContext.Step, input.Id, out var activeLink))
+        {
+            return LinkPresentationState.None;
+        }
+
+        if (activeLink.SourceKind == ModifierInputLinkSourceKind.ObjectPreview)
+        {
+            return BuildObjectPreviewLinkPresentationState(doc, objectId, stepContexts.Select(context => context.Step), activeLink);
+        }
+
+        var sourceStepLabel = GetStoredStepLabel(activeLink);
+        var sourceOutputLabel = GetStoredOutputLabel(activeLink);
+        var sourceStepContext = stepContexts.FirstOrDefault(candidate => candidate.Step.StepId == activeLink.SourceStepId);
+        if (sourceStepContext is null)
+        {
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, $"Linked source '{sourceStepLabel}' was removed.");
+        }
+
+        sourceStepLabel = sourceStepContext.DisplayName;
+        if (sourceStepContext.Index >= currentStepContext.Index)
+        {
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, $"Linked source '{sourceStepLabel}' must stay above this modifier.");
+        }
+
+        if (!sourceStepContext.Step.Enabled)
+        {
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, $"Linked source '{sourceStepLabel}' is disabled.");
+        }
+
+        if (sourceStepContext.Contract is null)
+        {
+            var message = string.IsNullOrWhiteSpace(sourceStepContext.ContractError)
+                ? $"Linked source '{sourceStepLabel}' could not be loaded."
+                : $"Linked source '{sourceStepLabel}' could not be loaded: {sourceStepContext.ContractError}";
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, message);
+        }
+
+        var sourceOutput = sourceStepContext.Contract.Outputs.FirstOrDefault(output => output.Id.Equals(activeLink.SourceOutputId, StringComparison.Ordinal));
+        if (sourceOutput is null)
+        {
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, $"Linked output '{sourceOutputLabel}' no longer exists on '{sourceStepLabel}'.");
+        }
+
+        sourceOutputLabel = sourceOutput.Label;
+        if (!AreKindsLinkCompatible(input.Kind, sourceOutput.Kind))
+        {
+            return new LinkPresentationState(true, true, sourceStepLabel, sourceOutputLabel, $"Linked output '{sourceOutputLabel}' is no longer compatible with '{input.Label}'.");
+        }
+
+        var runtimeOutputs = runtime?.GetOutputsForIndex(sourceStepContext.Index);
+        var hasRuntimeValue = TryGetStepOutputValue(runtimeOutputs, sourceOutput.Id, out var runtimeOutput);
+        var status = $"Linked from {sourceStepLabel} -> {sourceOutputLabel}.";
+        if (hasRuntimeValue)
+        {
+            status = $"{status} {runtimeOutput.DisplayValue}";
+        }
+
+        return new LinkPresentationState(true, false, sourceStepLabel, sourceOutputLabel, status);
+    }
+
+    private LinkPresentationState BuildObjectPreviewLinkPresentationState(
+        RhinoDoc doc,
+        Guid objectId,
+        IEnumerable<ModifierStepSpec> steps,
+        ModifierInputLinkSpec activeLink)
+    {
+        var sourceObjectLabel = GetStoredObjectLabel(activeLink);
+        if (activeLink.SourceObjectId == Guid.Empty)
+        {
+            return new LinkPresentationState(true, true, sourceObjectLabel, string.Empty, "Modified source object is missing.");
+        }
+
+        if (TryGetObjectPreviewCyclePath(doc, objectId, GetActiveObjectPreviewDependencies(steps), out var cyclePath))
+        {
+            return new LinkPresentationState(true, true, sourceObjectLabel, string.Empty, $"Circular modified-geometry reference detected: {FormatObjectPreviewCycle(doc, cyclePath)}.");
+        }
+
+        var sourceRhinoObject = doc.Objects.FindId(activeLink.SourceObjectId);
+        if (sourceRhinoObject is null)
+        {
+            return new LinkPresentationState(true, true, sourceObjectLabel, string.Empty, $"Modified source '{sourceObjectLabel}' was removed.");
+        }
+
+        sourceObjectLabel = DescribeLinkedObject(sourceRhinoObject);
+        var sourceSpec = ModifierStackStorage.Load(sourceRhinoObject);
+        if (sourceSpec.Steps.Count == 0)
+        {
+            return new LinkPresentationState(true, true, sourceObjectLabel, string.Empty, $"Modified source '{sourceObjectLabel}' no longer has any modifiers.");
+        }
+
+        var sourceRuntime = TryGetStackRuntime(doc, activeLink.SourceObjectId);
+        if (sourceRuntime is null || !sourceRuntime.HasEvaluated)
+        {
+            return new LinkPresentationState(true, false, sourceObjectLabel, string.Empty, $"Using modified result of {sourceObjectLabel}. Waiting for preview evaluation.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceRuntime.ErrorMessage))
+        {
+            return new LinkPresentationState(true, true, sourceObjectLabel, string.Empty, $"Modified source '{sourceObjectLabel}' is unavailable: {sourceRuntime.ErrorMessage}");
+        }
+
+        var geometrySummary = sourceRuntime.PreviewGeometry.Count == 0
+            ? "none"
+            : DescribeGeometry(sourceRuntime.PreviewGeometry);
+        return new LinkPresentationState(true, false, sourceObjectLabel, string.Empty, $"Using modified result of {sourceObjectLabel}. {geometrySummary}");
+    }
+
+    private static bool AreKindsLinkCompatible(ModifierIoKind inputKind, ModifierIoKind outputKind)
+    {
+        return IsNumericLinkKind(inputKind) && IsNumericLinkKind(outputKind)
+            ? true
+            : inputKind == outputKind;
+    }
+
+    private static bool IsNumericLinkKind(ModifierIoKind kind)
+    {
+        return kind is ModifierIoKind.Number or ModifierIoKind.NumberSlider;
+    }
+
+    private static string GetStoredStepLabel(ModifierInputLinkSpec inputLink)
+    {
+        return string.IsNullOrWhiteSpace(inputLink.SourceStepLabel)
+            ? "previous modifier"
+            : inputLink.SourceStepLabel;
+    }
+
+    private static string GetStoredOutputLabel(ModifierInputLinkSpec inputLink)
+    {
+        return string.IsNullOrWhiteSpace(inputLink.SourceOutputLabel)
+            ? "output"
+            : inputLink.SourceOutputLabel;
+    }
+
+    private static string GetStoredObjectLabel(ModifierInputLinkSpec inputLink)
+    {
+        return string.IsNullOrWhiteSpace(inputLink.SourceObjectLabel)
+            ? "modifier object"
+            : inputLink.SourceObjectLabel;
     }
 
     private static DefinitionContract CreateDefinitionContract(GH_Document document)
@@ -1220,7 +1792,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        return TrySerializeGooValue(first, kind, out serializedValue);
+        return TryExtractPublishedOutputValue(first, kind, out _, out serializedValue);
     }
 
     private static List<RuntimeInputBinding> BindInputDescriptors(GH_Document document, IEnumerable<ModifierInputDescriptor> descriptors)
@@ -1272,9 +1844,23 @@ internal sealed class ModifierEngine : IDisposable
         return ResolveDocumentObject(document, instanceGuid) as IGH_Param;
     }
 
-    private static bool ApplyInputBinding(RhinoDoc doc, RuntimeInputBinding binding, ModifierStepSpec stepSpec, IReadOnlyList<GeometryBase> currentGeometry, out string error)
+    private bool ApplyInputBinding(
+        RhinoDoc doc,
+        RuntimeInputBinding binding,
+        ModifierStepSpec stepSpec,
+        int stepIndex,
+        IReadOnlyList<ModifierStepSpec> allSteps,
+        IReadOnlyDictionary<Guid, IReadOnlyList<StepOutputValue>> publishedOutputsByStepId,
+        IReadOnlyList<GeometryBase> currentGeometry,
+        out string error)
     {
         error = string.Empty;
+
+        if (TryGetInputLink(stepSpec, binding.Descriptor.Id, out var inputLink))
+        {
+            return TryApplyLinkedInput(doc, binding, stepIndex, allSteps, publishedOutputsByStepId, inputLink, out error);
+        }
+
         var hasExplicitValue = TryGetExplicitInputValue(stepSpec, binding.Descriptor, out var serializedValue);
 
         if (binding.Slider is not null)
@@ -1389,6 +1975,221 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
+    private bool TryApplyLinkedInput(
+        RhinoDoc doc,
+        RuntimeInputBinding binding,
+        int stepIndex,
+        IReadOnlyList<ModifierStepSpec> allSteps,
+        IReadOnlyDictionary<Guid, IReadOnlyList<StepOutputValue>> publishedOutputsByStepId,
+        ModifierInputLinkSpec inputLink,
+        out string error)
+    {
+        error = string.Empty;
+        if (inputLink.SourceKind == ModifierInputLinkSourceKind.ObjectPreview)
+        {
+            return TryApplyObjectPreviewInput(doc, binding, inputLink, out error);
+        }
+
+        if (!TryResolveLinkedOutput(binding.Descriptor, stepIndex, allSteps, publishedOutputsByStepId, inputLink, out var sourceOutputValue, out var sourceStepLabel, out var sourceOutputLabel, out error))
+        {
+            return false;
+        }
+
+        if (binding.Slider is not null)
+        {
+            return TrySetLinkedSliderValue(binding, sourceOutputValue, sourceOutputLabel, out error);
+        }
+
+        if (binding.Param is null)
+        {
+            error = $"Input '{binding.Descriptor.Label}' is not bound to a Grasshopper parameter.";
+            return false;
+        }
+
+        return TrySetLinkedParamValues(binding, sourceOutputValue, sourceStepLabel, sourceOutputLabel, out error);
+    }
+
+    private bool TryApplyObjectPreviewInput(RhinoDoc doc, RuntimeInputBinding binding, ModifierInputLinkSpec inputLink, out string error)
+    {
+        error = string.Empty;
+        if (binding.Descriptor.Kind != ModifierIoKind.Geometry)
+        {
+            error = $"Input '{binding.Descriptor.Label}' does not support modified-geometry references.";
+            return false;
+        }
+
+        if (binding.Param is null)
+        {
+            error = $"Input '{binding.Descriptor.Label}' is not bound to a Grasshopper parameter.";
+            return false;
+        }
+
+        var sourceObjectLabel = GetStoredObjectLabel(inputLink);
+        var sourceRhinoObject = doc.Objects.FindId(inputLink.SourceObjectId);
+        if (sourceRhinoObject is null)
+        {
+            error = $"Modified source '{sourceObjectLabel}' could not be found.";
+            return false;
+        }
+
+        sourceObjectLabel = DescribeLinkedObject(sourceRhinoObject);
+        var sourceSpec = ModifierStackStorage.Load(sourceRhinoObject);
+        if (sourceSpec.Steps.Count == 0)
+        {
+            error = $"Modified source '{sourceObjectLabel}' no longer has any modifiers.";
+            return false;
+        }
+
+        var sourceRuntime = TryGetStackRuntime(doc, inputLink.SourceObjectId);
+        if (sourceRuntime is null || !sourceRuntime.HasEvaluated)
+        {
+            error = $"Modified source '{sourceObjectLabel}' has no preview available yet.";
+            return false;
+        }
+
+        if (!string.IsNullOrWhiteSpace(sourceRuntime.ErrorMessage))
+        {
+            error = $"Modified source '{sourceObjectLabel}' is unavailable: {sourceRuntime.ErrorMessage}";
+            return false;
+        }
+
+        return TryAppendGeometry(binding.Param, sourceRuntime.PreviewGeometry, out error);
+    }
+
+    private bool TryResolveLinkedOutput(
+        ModifierInputDescriptor targetInput,
+        int targetStepIndex,
+        IReadOnlyList<ModifierStepSpec> allSteps,
+        IReadOnlyDictionary<Guid, IReadOnlyList<StepOutputValue>> publishedOutputsByStepId,
+        ModifierInputLinkSpec inputLink,
+        out StepOutputValue sourceOutputValue,
+        out string sourceStepLabel,
+        out string sourceOutputLabel,
+        out string error)
+    {
+        sourceOutputValue = default;
+        sourceStepLabel = GetStoredStepLabel(inputLink);
+        sourceOutputLabel = GetStoredOutputLabel(inputLink);
+        error = string.Empty;
+
+        if (inputLink.SourceKind != ModifierInputLinkSourceKind.StepOutput)
+        {
+            error = $"Input '{targetInput.Label}' is not linked to an upstream modifier output.";
+            return false;
+        }
+
+        var sourceStepIndex = -1;
+        for (var i = 0; i < allSteps.Count; i++)
+        {
+            if (allSteps[i].StepId == inputLink.SourceStepId)
+            {
+                sourceStepIndex = i;
+                break;
+            }
+        }
+        if (sourceStepIndex < 0)
+        {
+            error = $"Linked source '{sourceStepLabel}' was removed.";
+            return false;
+        }
+
+        if (sourceStepIndex >= targetStepIndex)
+        {
+            error = $"Linked source '{sourceStepLabel}' must stay above this modifier.";
+            return false;
+        }
+
+        var sourceStep = allSteps[sourceStepIndex];
+        sourceStepLabel = Path.GetFileName(sourceStep.Path);
+        if (!sourceStep.Enabled)
+        {
+            error = $"Linked source '{sourceStepLabel}' is disabled.";
+            return false;
+        }
+
+        if (!TryGetDefinitionContract(sourceStep.Path, out var sourceContract, out var contractError))
+        {
+            error = $"Linked source '{sourceStepLabel}' could not be loaded: {contractError}";
+            return false;
+        }
+
+        var sourceOutput = sourceContract.Outputs.FirstOrDefault(output => output.Id.Equals(inputLink.SourceOutputId, StringComparison.Ordinal));
+        if (sourceOutput is null)
+        {
+            error = $"Linked output '{sourceOutputLabel}' no longer exists on '{sourceStepLabel}'.";
+            return false;
+        }
+
+        sourceOutputLabel = sourceOutput.Label;
+        if (!AreKindsLinkCompatible(targetInput.Kind, sourceOutput.Kind))
+        {
+            error = $"Linked output '{sourceOutputLabel}' is no longer compatible with input '{targetInput.Label}'.";
+            return false;
+        }
+
+        if (!publishedOutputsByStepId.TryGetValue(sourceStep.StepId, out var publishedOutputs) ||
+            !TryGetStepOutputValue(publishedOutputs, sourceOutput.Id, out sourceOutputValue))
+        {
+            error = $"Linked source '{sourceStepLabel}' has no runtime output available for '{sourceOutputLabel}'.";
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool TryGetInputLink(ModifierStepSpec stepSpec, string inputId, out ModifierInputLinkSpec linkSpec)
+    {
+        if (stepSpec.InputLinks.TryGetValue(inputId, out var storedLink) &&
+            IsStoredLinkValid(storedLink))
+        {
+            linkSpec = storedLink!;
+            return true;
+        }
+
+        linkSpec = null!;
+        return false;
+    }
+
+    private static bool TryGetStepOutputInputLink(ModifierStepSpec stepSpec, string inputId, out ModifierInputLinkSpec linkSpec)
+    {
+        if (TryGetInputLink(stepSpec, inputId, out linkSpec) &&
+            linkSpec.SourceKind == ModifierInputLinkSourceKind.StepOutput)
+        {
+            return true;
+        }
+
+        linkSpec = null!;
+        return false;
+    }
+
+    private static bool TryGetObjectPreviewInputLink(ModifierStepSpec stepSpec, string inputId, out ModifierInputLinkSpec linkSpec)
+    {
+        if (TryGetInputLink(stepSpec, inputId, out linkSpec) &&
+            linkSpec.SourceKind == ModifierInputLinkSourceKind.ObjectPreview)
+        {
+            return true;
+        }
+
+        linkSpec = null!;
+        return false;
+    }
+
+    private static bool IsStoredLinkValid(ModifierInputLinkSpec? storedLink)
+    {
+        if (storedLink is null)
+        {
+            return false;
+        }
+
+        return storedLink.SourceKind switch
+        {
+            ModifierInputLinkSourceKind.StepOutput => storedLink.SourceStepId != Guid.Empty &&
+                !string.IsNullOrWhiteSpace(storedLink.SourceOutputId),
+            ModifierInputLinkSourceKind.ObjectPreview => storedLink.SourceObjectId != Guid.Empty,
+            _ => false,
+        };
+    }
+
     private static bool TryGetExplicitInputValue(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor, out string serializedValue)
     {
         if (stepSpec.InputValues.TryGetValue(descriptor.Id, out var storedValue))
@@ -1415,7 +2216,7 @@ internal sealed class ModifierEngine : IDisposable
 
     private static bool IsMissingRequiredInput(ModifierStepSpec stepSpec, ModifierInputDescriptor descriptor)
     {
-        if (descriptor.IsOptional || descriptor.UsesSceneGeometryWhenBlank)
+        if (descriptor.IsOptional || descriptor.UsesSceneGeometryWhenBlank || TryGetInputLink(stepSpec, descriptor.Id, out _))
         {
             return false;
         }
@@ -1478,8 +2279,7 @@ internal sealed class ModifierEngine : IDisposable
     private static bool TryAppendReferencedGeometry(RhinoDoc doc, IGH_Param param, string serializedValue, IReadOnlyList<GeometryBase> currentGeometry, out string error)
     {
         error = string.Empty;
-        var tokens = serializedValue
-            .Split(new[] { ',', ';', '\r', '\n', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var tokens = TokenizeGeometryReferenceValue(serializedValue);
 
         var geometry = new List<GeometryBase>();
         foreach (var token in tokens)
@@ -1516,25 +2316,215 @@ internal sealed class ModifierEngine : IDisposable
         return TryAppendGeometry(param, geometry, out error);
     }
 
-    private static string FormatOutputValue(ModifierOutputDescriptor descriptor, IGH_Param param)
+    private static bool TryGetSingleReferencedObjectId(string serializedValue, out Guid objectId)
+    {
+        objectId = Guid.Empty;
+        var tokens = TokenizeGeometryReferenceValue(serializedValue);
+        if (tokens.Length != 1)
+        {
+            return false;
+        }
+
+        return Guid.TryParse(tokens[0], out objectId);
+    }
+
+    private static string[] TokenizeGeometryReferenceValue(string serializedValue)
+    {
+        return serializedValue
+            .Split(new[] { ',', ';', '\r', '\n', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    private static bool TrySetLinkedSliderValue(RuntimeInputBinding binding, StepOutputValue sourceOutputValue, string sourceOutputLabel, out string error)
+    {
+        error = string.Empty;
+        if (binding.Slider is null)
+        {
+            error = $"Input '{binding.Descriptor.Label}' is not bound to a slider.";
+            return false;
+        }
+
+        if (sourceOutputValue.Values.Count != 1)
+        {
+            error = $"Linked output '{sourceOutputLabel}' must provide exactly one numeric value for slider input '{binding.Descriptor.Label}'.";
+            return false;
+        }
+
+        if (!TryConvertToDouble(sourceOutputValue.Values[0], out var sliderValue))
+        {
+            error = $"Linked output '{sourceOutputLabel}' must provide a numeric value for slider input '{binding.Descriptor.Label}'.";
+            return false;
+        }
+
+        var decimalValue = (decimal)sliderValue;
+        if (!binding.Slider.TrySetSliderValue(decimalValue))
+        {
+            binding.Slider.SetSliderValue(decimalValue);
+        }
+
+        return true;
+    }
+
+    private static bool TrySetLinkedParamValues(RuntimeInputBinding binding, StepOutputValue sourceOutputValue, string sourceStepLabel, string sourceOutputLabel, out string error)
+    {
+        error = string.Empty;
+        if (binding.Param is null)
+        {
+            error = $"Input '{binding.Descriptor.Label}' is not bound to a Grasshopper parameter.";
+            return false;
+        }
+
+        var values = new List<object>(sourceOutputValue.Values.Count);
+        switch (binding.Descriptor.Kind)
+        {
+            case ModifierIoKind.Number:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (!TryConvertToDouble(publishedValue, out var numberValue))
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish numeric values.";
+                        return false;
+                    }
+
+                    values.Add(binding.Param is Param_Integer
+                        ? (object)(int)Math.Round(numberValue, MidpointRounding.AwayFromZero)
+                        : numberValue);
+                }
+                break;
+
+            case ModifierIoKind.Point:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (publishedValue is not Point3d pointValue)
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish point values.";
+                        return false;
+                    }
+
+                    values.Add(pointValue);
+                }
+                break;
+
+            case ModifierIoKind.String:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (publishedValue is not string stringValue)
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish text values.";
+                        return false;
+                    }
+
+                    values.Add(stringValue);
+                }
+                break;
+
+            case ModifierIoKind.Boolean:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (publishedValue is not bool boolValue)
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish boolean values.";
+                        return false;
+                    }
+
+                    values.Add(boolValue);
+                }
+                break;
+
+            case ModifierIoKind.Color:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (publishedValue is not System.Drawing.Color colorValue)
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish color values.";
+                        return false;
+                    }
+
+                    values.Add(colorValue);
+                }
+                break;
+
+            case ModifierIoKind.Geometry:
+                foreach (var publishedValue in sourceOutputValue.Values)
+                {
+                    if (publishedValue is not GeometryBase geometryValue)
+                    {
+                        error = $"Linked output '{sourceOutputLabel}' from '{sourceStepLabel}' did not publish geometry values.";
+                        return false;
+                    }
+
+                    values.Add(geometryValue.Duplicate());
+                }
+                break;
+
+            default:
+                error = $"Input '{binding.Descriptor.Label}' uses an unsupported input type.";
+                return false;
+        }
+
+        return TrySetParamValues(binding.Param, values, out error);
+    }
+
+    private static bool TrySetParamValues(IGH_Param param, IEnumerable<object> values, out string error)
+    {
+        error = string.Empty;
+        ClearParamData(param);
+        try
+        {
+            SetPersistentData(param, values);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryGetStepOutputValue(IReadOnlyList<StepOutputValue>? outputs, string outputId, out StepOutputValue outputValue)
+    {
+        if (outputs is not null)
+        {
+            foreach (var candidate in outputs)
+            {
+                if (candidate.Id.Equals(outputId, StringComparison.Ordinal))
+                {
+                    outputValue = candidate;
+                    return true;
+                }
+            }
+        }
+
+        outputValue = default;
+        return false;
+    }
+
+    private static StepOutputValue CapturePublishedOutput(ModifierOutputDescriptor descriptor, IGH_Param param)
     {
         if (descriptor.Kind == ModifierIoKind.Geometry)
         {
             var geometry = GeometryConversion.ReadOutput(param);
-            return geometry.Geometry.Count == 0
-                ? "none"
-                : DescribeGeometry(geometry.Geometry);
+            return new StepOutputValue(
+                descriptor.Id,
+                geometry.Geometry.Count == 0 ? "none" : DescribeGeometry(geometry.Geometry),
+                CloneGeometry(geometry.Geometry).Cast<object>().ToList());
         }
 
-        var values = new List<string>();
+        var publishedValues = new List<object>();
+        var displayValues = new List<string>();
         foreach (var goo in param.VolatileData.AllData(true))
         {
-            if (TrySerializeGooValue(goo, descriptor.Kind, out var serializedValue))
+            if (TryExtractPublishedOutputValue(goo, descriptor.Kind, out var publishedValue, out var serializedValue))
             {
-                values.Add(serializedValue);
+                publishedValues.Add(publishedValue);
+                displayValues.Add(serializedValue);
             }
         }
 
+        return new StepOutputValue(descriptor.Id, FormatPublishedOutputDisplay(displayValues), publishedValues);
+    }
+
+    private static string FormatPublishedOutputDisplay(IReadOnlyList<string> values)
+    {
         if (values.Count == 0)
         {
             return "none";
@@ -1549,9 +2539,10 @@ internal sealed class ModifierEngine : IDisposable
         return $"{string.Join(", ", values.Take(maxItems))} (+{values.Count - maxItems} more)";
     }
 
-    private static bool TrySerializeGooValue(IGH_Goo goo, ModifierIoKind kind, out string serializedValue)
+    private static bool TryExtractPublishedOutputValue(IGH_Goo goo, ModifierIoKind kind, out object publishedValue, out string serializedValue)
     {
         serializedValue = string.Empty;
+        publishedValue = null!;
         var value = goo.ScriptVariable();
         if (value is null)
         {
@@ -1564,6 +2555,7 @@ internal sealed class ModifierEngine : IDisposable
             case ModifierIoKind.NumberSlider:
                 if (TryConvertToDouble(value, out var numberValue))
                 {
+                    publishedValue = numberValue;
                     serializedValue = SerializeNumber(numberValue);
                     return true;
                 }
@@ -1573,6 +2565,7 @@ internal sealed class ModifierEngine : IDisposable
             case ModifierIoKind.Point:
                 if (value is Point3d point)
                 {
+                    publishedValue = point;
                     serializedValue = SerializePoint(point);
                     return true;
                 }
@@ -1580,12 +2573,14 @@ internal sealed class ModifierEngine : IDisposable
                 return false;
 
             case ModifierIoKind.String:
-                serializedValue = value.ToString() ?? string.Empty;
+                publishedValue = value.ToString() ?? string.Empty;
+                serializedValue = (string)publishedValue;
                 return true;
 
             case ModifierIoKind.Boolean:
                 if (value is bool boolValue)
                 {
+                    publishedValue = boolValue;
                     serializedValue = boolValue ? bool.TrueString.ToLowerInvariant() : bool.FalseString.ToLowerInvariant();
                     return true;
                 }
@@ -1595,6 +2590,7 @@ internal sealed class ModifierEngine : IDisposable
             case ModifierIoKind.Color:
                 if (value is System.Drawing.Color color)
                 {
+                    publishedValue = color;
                     serializedValue = SerializeColor(color);
                     return true;
                 }
@@ -1602,8 +2598,14 @@ internal sealed class ModifierEngine : IDisposable
                 return false;
 
             case ModifierIoKind.Geometry:
-                serializedValue = value.ToString() ?? string.Empty;
-                return true;
+                if (value is GeometryBase geometry)
+                {
+                    publishedValue = geometry.Duplicate();
+                    serializedValue = value.ToString() ?? string.Empty;
+                    return true;
+                }
+
+                return false;
 
             default:
                 return false;
@@ -1765,16 +2767,271 @@ internal sealed class ModifierEngine : IDisposable
         addMethod.Invoke(param, new object[] { values.ToList() });
     }
 
+    private bool TryPrepareObjectPreviewDependencies(RhinoDoc doc, Guid objectId, ModifierStackSpec spec, out string reason)
+    {
+        reason = string.Empty;
+        var waitingForUpstream = false;
+        foreach (var sourceObjectId in GetActiveObjectPreviewDependencies(spec))
+        {
+            var sourceRhinoObject = doc.Objects.FindId(sourceObjectId);
+            if (sourceRhinoObject is null)
+            {
+                continue;
+            }
+
+            var sourceSpec = ModifierStackStorage.Load(sourceRhinoObject);
+            if (sourceSpec.Steps.Count == 0)
+            {
+                continue;
+            }
+
+            UpdateObjectDependencies(doc, sourceObjectId, sourceSpec);
+            var sourceRuntime = GetOrCreateStackRuntime(doc, sourceObjectId);
+            var documentState = GetOrCreateDocumentState(doc);
+            if (!sourceRuntime.HasEvaluated || documentState.DirtyObjects.Contains(sourceObjectId))
+            {
+                QueueEvaluation(doc, sourceObjectId);
+                waitingForUpstream = true;
+                if (string.IsNullOrWhiteSpace(reason))
+                {
+                    reason = $"Waiting for modified source {DescribeLinkedObject(sourceRhinoObject)}.";
+                }
+            }
+        }
+
+        return !waitingForUpstream;
+    }
+
+    private void UpdateObjectDependencies(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
+    {
+        var documentState = GetOrCreateDocumentState(doc);
+        var newDependencies = GetActiveObjectPreviewDependencies(spec).ToHashSet();
+        var oldDependencies = documentState.DependenciesByObject.TryGetValue(objectId, out var existingDependencies)
+            ? existingDependencies.ToHashSet()
+            : new HashSet<Guid>();
+
+        foreach (var sourceObjectId in oldDependencies)
+        {
+            if (newDependencies.Contains(sourceObjectId))
+            {
+                continue;
+            }
+
+            if (documentState.DependentsByObject.TryGetValue(sourceObjectId, out var dependents))
+            {
+                dependents.Remove(objectId);
+                if (dependents.Count == 0)
+                {
+                    documentState.DependentsByObject.Remove(sourceObjectId);
+                }
+            }
+        }
+
+        if (newDependencies.Count == 0)
+        {
+            documentState.DependenciesByObject.Remove(objectId);
+            return;
+        }
+
+        documentState.DependenciesByObject[objectId] = newDependencies;
+        foreach (var sourceObjectId in newDependencies)
+        {
+            if (!documentState.DependentsByObject.TryGetValue(sourceObjectId, out var dependents))
+            {
+                dependents = new HashSet<Guid>();
+                documentState.DependentsByObject[sourceObjectId] = dependents;
+            }
+
+            dependents.Add(objectId);
+        }
+    }
+
+    private void DetachObjectDependencies(RhinoDoc doc, Guid objectId)
+    {
+        if (!_documents.TryGetValue(doc.RuntimeSerialNumber, out var documentState))
+        {
+            return;
+        }
+
+        if (documentState.DependenciesByObject.TryGetValue(objectId, out var dependencies))
+        {
+            foreach (var sourceObjectId in dependencies)
+            {
+                if (documentState.DependentsByObject.TryGetValue(sourceObjectId, out var dependents))
+                {
+                    dependents.Remove(objectId);
+                    if (dependents.Count == 0)
+                    {
+                        documentState.DependentsByObject.Remove(sourceObjectId);
+                    }
+                }
+            }
+
+            documentState.DependenciesByObject.Remove(objectId);
+        }
+
+        documentState.DirtyObjects.Remove(objectId);
+    }
+
+    private void QueueDependentEvaluations(RhinoDoc doc, Guid objectId)
+    {
+        if (!_documents.TryGetValue(doc.RuntimeSerialNumber, out var documentState) ||
+            !documentState.DependentsByObject.TryGetValue(objectId, out var dependents))
+        {
+            return;
+        }
+
+        foreach (var dependentObjectId in dependents.ToArray())
+        {
+            QueueEvaluation(doc, dependentObjectId);
+        }
+    }
+
+    private void MarkObjectClean(RhinoDoc doc, Guid objectId)
+    {
+        if (_documents.TryGetValue(doc.RuntimeSerialNumber, out var documentState))
+        {
+            documentState.DirtyObjects.Remove(objectId);
+        }
+    }
+
+    private static IEnumerable<Guid> GetActiveObjectPreviewDependencies(ModifierStackSpec spec)
+    {
+        return GetActiveObjectPreviewDependencies(spec.Steps);
+    }
+
+    private static IEnumerable<Guid> GetActiveObjectPreviewDependencies(IEnumerable<ModifierStepSpec> steps)
+    {
+        foreach (var step in steps)
+        {
+            if (!step.Enabled)
+            {
+                continue;
+            }
+
+            foreach (var inputLink in step.InputLinks.Values)
+            {
+                if (inputLink is null || inputLink.SourceKind != ModifierInputLinkSourceKind.ObjectPreview || inputLink.SourceObjectId == Guid.Empty)
+                {
+                    continue;
+                }
+
+                yield return inputLink.SourceObjectId;
+            }
+        }
+    }
+
+    private static bool TryGetObjectPreviewCycleError(RhinoDoc doc, Guid objectId, ModifierStackSpec spec, out string message)
+    {
+        message = string.Empty;
+        if (!TryGetObjectPreviewCyclePath(doc, objectId, GetActiveObjectPreviewDependencies(spec), out var cyclePath))
+        {
+            return false;
+        }
+
+        message = $"Circular modified-geometry reference detected: {FormatObjectPreviewCycle(doc, cyclePath)}.";
+        return true;
+    }
+
+    private static bool TryGetObjectPreviewCyclePath(
+        RhinoDoc doc,
+        Guid targetObjectId,
+        IEnumerable<Guid> sourceObjectIds,
+        out IReadOnlyList<Guid> cyclePath)
+    {
+        cyclePath = Array.Empty<Guid>();
+        foreach (var sourceObjectId in sourceObjectIds.Distinct())
+        {
+            if (sourceObjectId == targetObjectId)
+            {
+                cyclePath = new[] { targetObjectId, targetObjectId };
+                return true;
+            }
+
+            var path = new List<Guid> { targetObjectId };
+            if (TryReachTargetObject(doc, sourceObjectId, targetObjectId, new HashSet<Guid>(), path))
+            {
+                cyclePath = path;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReachTargetObject(
+        RhinoDoc doc,
+        Guid currentObjectId,
+        Guid targetObjectId,
+        HashSet<Guid> visited,
+        List<Guid> path)
+    {
+        if (!visited.Add(currentObjectId))
+        {
+            return false;
+        }
+
+        path.Add(currentObjectId);
+        if (currentObjectId == targetObjectId)
+        {
+            return true;
+        }
+
+        var currentObject = doc.Objects.FindId(currentObjectId);
+        if (currentObject is not null)
+        {
+            var currentSpec = ModifierStackStorage.Load(currentObject);
+            foreach (var dependencyObjectId in GetActiveObjectPreviewDependencies(currentSpec).Distinct())
+            {
+                if (TryReachTargetObject(doc, dependencyObjectId, targetObjectId, visited, path))
+                {
+                    return true;
+                }
+            }
+        }
+
+        path.RemoveAt(path.Count - 1);
+        return false;
+    }
+
+    private static string FormatObjectPreviewCycle(RhinoDoc doc, IReadOnlyList<Guid> cyclePath)
+    {
+        return string.Join(" -> ", cyclePath.Select(objectId => DescribeLinkedObject(doc.Objects.FindId(objectId), objectId)));
+    }
+
+    private static string DescribeLinkedObject(RhinoObject rhinoObject)
+    {
+        return DescribeLinkedObject(rhinoObject, rhinoObject.Id);
+    }
+
+    private static bool DoesObjectHaveModifierStack(RhinoDoc doc, Guid objectId)
+    {
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            return false;
+        }
+
+        return ModifierStackStorage.Load(rhinoObject).Steps.Count > 0;
+    }
+
+    private static string DescribeLinkedObject(RhinoObject? rhinoObject, Guid objectId)
+    {
+        return rhinoObject is null
+            ? objectId.ToString("D")
+            : $"{rhinoObject.ObjectType} {rhinoObject.Id}";
+    }
+
     private void ResetStackRuntime(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
     {
         if (spec.Steps.Count == 0)
         {
             Log($"ResetStackRuntime removing empty stack. Object={objectId}");
             RemoveStackRuntime(doc, objectId);
-            RaiseStateChanged();
             return;
         }
 
+        UpdateObjectDependencies(doc, objectId, spec);
         var runtime = GetOrCreateStackRuntime(doc, objectId);
         runtime.Reset(spec.Steps.Count);
         runtime.RootRevision = NextRevision();
@@ -1826,18 +3083,24 @@ internal sealed class ModifierEngine : IDisposable
             return;
         }
 
+        DetachObjectDependencies(doc, objectId);
+
         if (_documents.TryGetValue(doc.RuntimeSerialNumber, out var documentState) &&
             documentState.Stacks.Remove(objectId, out var runtime))
         {
             Log($"Stack runtime removed. Doc={doc.RuntimeSerialNumber}, Object={objectId}");
             runtime.Dispose();
-            UpdateConduitAndViews(doc);
-            RaiseStateChanged();
         }
+
+        QueueDependentEvaluations(doc, objectId);
+        UpdateConduitAndViews(doc);
+        RaiseStateChanged();
     }
 
     private void QueueEvaluation(RhinoDoc doc, Guid objectId)
     {
+        var documentState = GetOrCreateDocumentState(doc);
+        documentState.DirtyObjects.Add(objectId);
         var key = $"{doc.RuntimeSerialNumber}:{objectId}";
         if (_queuedKeys.Add(key))
         {
@@ -1959,6 +3222,12 @@ internal sealed class ModifierEngine : IDisposable
     {
         public Dictionary<Guid, StackRuntime> Stacks { get; } = new();
 
+        public Dictionary<Guid, HashSet<Guid>> DependenciesByObject { get; } = new();
+
+        public Dictionary<Guid, HashSet<Guid>> DependentsByObject { get; } = new();
+
+        public HashSet<Guid> DirtyObjects { get; } = new();
+
         public void Dispose()
         {
             foreach (var runtime in Stacks.Values)
@@ -1967,12 +3236,17 @@ internal sealed class ModifierEngine : IDisposable
             }
 
             Stacks.Clear();
+            DependenciesByObject.Clear();
+            DependentsByObject.Clear();
+            DirtyObjects.Clear();
         }
     }
 
     private sealed class StackRuntime : IDisposable
     {
         public ulong RootRevision { get; set; }
+
+        public bool HasEvaluated { get; set; }
 
         public List<StepRuntime?> StepRuntimes { get; } = new();
 
@@ -2028,6 +3302,7 @@ internal sealed class ModifierEngine : IDisposable
             StepRuntimes.Clear();
             PreviewGeometry.Clear();
             ErrorMessage = string.Empty;
+            HasEvaluated = false;
             _stepErrors = Enumerable.Repeat(string.Empty, stepCount).ToList();
             _stepOutputs = new List<List<StepOutputValue>>(stepCount);
 
@@ -2129,6 +3404,7 @@ internal sealed class ModifierEngine : IDisposable
 
             StepRuntimes.Clear();
             PreviewGeometry.Clear();
+            HasEvaluated = false;
             _stepErrors.Clear();
             _stepOutputs.Clear();
         }
@@ -2183,7 +3459,7 @@ internal sealed class ModifierEngine : IDisposable
 
         public List<GeometryBase> CachedOutput { get; set; } = new();
 
-        public List<StepOutputValue> CachedDisplayedOutputs { get; set; } = new();
+        public List<StepOutputValue> CachedPublishedOutputs { get; set; } = new();
 
         public bool HasGeometryOutputs => GeometryOutputs.Count > 0;
 
@@ -2191,7 +3467,7 @@ internal sealed class ModifierEngine : IDisposable
         {
             Document.Dispose();
             CachedOutput.Clear();
-            CachedDisplayedOutputs.Clear();
+            CachedPublishedOutputs.Clear();
         }
     }
 
@@ -2295,13 +3571,30 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
-    private readonly record struct StepOutputValue(string Id, string DisplayValue);
+    private readonly record struct StepOutputValue(string Id, string DisplayValue, IReadOnlyList<object> Values);
+
+    private sealed record PanelStepContext(
+        int Index,
+        ModifierStepSpec Step,
+        string DisplayName,
+        DefinitionContract? Contract,
+        string ContractError);
+
+    private readonly record struct LinkPresentationState(
+        bool HasLink,
+        bool IsBroken,
+        string SourceStepLabel,
+        string SourceOutputLabel,
+        string StatusMessage)
+    {
+        public static LinkPresentationState None => new(false, false, string.Empty, string.Empty, string.Empty);
+    }
 
     private readonly record struct StepEvaluationResult(
         bool Success,
         bool HasGeometryOutput,
         List<GeometryBase> OutputGeometry,
-        List<StepOutputValue> DisplayOutputs,
+        List<StepOutputValue> PublishedOutputs,
         string ErrorMessage,
         int RawGeometryOutputItemCount,
         List<string> SkippedGeometryOutputTypes)
@@ -2309,7 +3602,7 @@ internal sealed class ModifierEngine : IDisposable
         public static StepEvaluationResult Successful(
             bool hasGeometryOutput,
             List<GeometryBase> outputGeometry,
-            List<StepOutputValue> displayOutputs,
+            List<StepOutputValue> publishedOutputs,
             int rawGeometryOutputItemCount,
             List<string> skippedGeometryOutputTypes)
         {
@@ -2317,7 +3610,7 @@ internal sealed class ModifierEngine : IDisposable
                 true,
                 hasGeometryOutput,
                 outputGeometry,
-                displayOutputs,
+                publishedOutputs,
                 string.Empty,
                 rawGeometryOutputItemCount,
                 skippedGeometryOutputTypes);
