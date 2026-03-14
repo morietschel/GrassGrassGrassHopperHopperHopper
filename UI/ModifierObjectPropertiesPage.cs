@@ -10,9 +10,11 @@ public sealed class ModifierObjectPropertiesPage : ObjectPropertiesPage
 
     public override object PageControl => _panel;
 
+    public override int Index => int.MaxValue;
+
     public override bool ShouldDisplay(ObjectPropertiesPageEventArgs e)
     {
-        return e.ObjectCount == 1;
+        return true;
     }
 
     public override void UpdatePage(ObjectPropertiesPageEventArgs e)
