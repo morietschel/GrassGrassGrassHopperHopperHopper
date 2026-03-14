@@ -1,0 +1,6 @@
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.csproj.AssemblyReference.cache
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.GeneratedMSBuildEditorConfig.editorconfig
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.AssemblyInfoInputs.cache
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.AssemblyInfo.cs
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.csproj.CoreCompileInputs.cache
+C:\Users\cdrie\src\github.com\morietschel\GrassGrassGrassHopperHopperHopper\plugin\GGGHHH\obj\Debug\net7.0-windows\GGGHHH.sourcelink.json

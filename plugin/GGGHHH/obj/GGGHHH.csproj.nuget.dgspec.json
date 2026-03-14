@@ -1,0 +1,64 @@
+{
+  "format": 1,
+  "restore": {
+    "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj": {}
+  },
+  "projects": {
+    "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj",
+        "projectName": "GGGHHH",
+        "projectPath": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj",
+        "packagesPath": "C:\\Users\\cdrie\\.nuget\\packages\\",
+        "outputPath": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\obj\\",
+        "projectStyle": "PackageReference",
+        "crossTargeting": true,
+        "configFilePaths": [
+          "C:\\Users\\cdrie\\AppData\\Roaming\\NuGet\\NuGet.Config",
+          "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+        ],
+        "originalTargetFrameworks": [
+          "net48"
+        ],
+        "sources": {
+          "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net48": {
+            "targetAlias": "net48",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "noWarn": [
+            "NU1701"
+          ],
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "10.0.100"
+      },
+      "frameworks": {
+        "net48": {
+          "targetAlias": "net48",
+          "dependencies": {
+            "RhinoCommon": {
+              "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+              "target": "Package",
+              "version": "[8.0.23304.9001, )"
+            }
+          },
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.103\\RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

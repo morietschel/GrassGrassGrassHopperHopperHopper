@@ -1,0 +1,117 @@
+{
+  "version": 3,
+  "targets": {
+    ".NETFramework,Version=v4.8": {
+      "RhinoCommon/8.0.23304.9001": {
+        "type": "package",
+        "compile": {
+          "lib/net48/Ed.Eto.dll": {
+            "related": ".xml"
+          },
+          "lib/net48/Eto.dll": {
+            "related": ".xml"
+          },
+          "lib/net48/Rhino.UI.dll": {},
+          "lib/net48/RhinoCommon.dll": {
+            "related": ".xml"
+          }
+        },
+        "runtime": {
+          "lib/net48/_._": {
+            "related": ".xml"
+          }
+        },
+        "build": {
+          "build/net48/RhinoCommon.targets": {}
+        }
+      }
+    }
+  },
+  "libraries": {
+    "RhinoCommon/8.0.23304.9001": {
+      "sha512": "hWuqXjcj/eb1/z8+bml4Bav/8Oug2p6t0mAVf37GhX9sP+M1aYNO9FappqeN8oefcIBkLBmAzr46DYNhTxFAGQ==",
+      "type": "package",
+      "path": "rhinocommon/8.0.23304.9001",
+      "files": [
+        ".nupkg.metadata",
+        ".signature.p7s",
+        "Eto-LICENSE.txt",
+        "build/net48/RhinoCommon.targets",
+        "lib/net48/Ed.Eto.dll",
+        "lib/net48/Ed.Eto.xml",
+        "lib/net48/Eto.dll",
+        "lib/net48/Eto.xml",
+        "lib/net48/Rhino.UI.dll",
+        "lib/net48/RhinoCommon.dll",
+        "lib/net48/RhinoCommon.xml",
+        "rhinocommon.8.0.23304.9001.nupkg.sha512",
+        "rhinocommon.nuspec",
+        "rhinocommon.png"
+      ]
+    }
+  },
+  "projectFileDependencyGroups": {
+    ".NETFramework,Version=v4.8": [
+      "RhinoCommon >= 8.0.23304.9001"
+    ]
+  },
+  "packageFolders": {
+    "C:\\Users\\cdrie\\.nuget\\packages\\": {}
+  },
+  "project": {
+    "version": "1.0.0",
+    "restore": {
+      "projectUniqueName": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj",
+      "projectName": "GGGHHH",
+      "projectPath": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\GGGHHH.csproj",
+      "packagesPath": "C:\\Users\\cdrie\\.nuget\\packages\\",
+      "outputPath": "C:\\Users\\cdrie\\src\\github.com\\morietschel\\GrassGrassGrassHopperHopperHopper\\plugin\\GGGHHH\\obj\\",
+      "projectStyle": "PackageReference",
+      "crossTargeting": true,
+      "configFilePaths": [
+        "C:\\Users\\cdrie\\AppData\\Roaming\\NuGet\\NuGet.Config",
+        "C:\\Program Files (x86)\\NuGet\\Config\\Microsoft.VisualStudio.Offline.config"
+      ],
+      "originalTargetFrameworks": [
+        "net48"
+      ],
+      "sources": {
+        "C:\\Program Files (x86)\\Microsoft SDKs\\NuGetPackages\\": {},
+        "https://api.nuget.org/v3/index.json": {}
+      },
+      "frameworks": {
+        "net48": {
+          "targetAlias": "net48",
+          "projectReferences": {}
+        }
+      },
+      "warningProperties": {
+        "noWarn": [
+          "NU1701"
+        ],
+        "warnAsError": [
+          "NU1605"
+        ]
+      },
+      "restoreAuditProperties": {
+        "enableAudit": "true",
+        "auditLevel": "low",
+        "auditMode": "direct"
+      },
+      "SdkAnalysisLevel": "10.0.100"
+    },
+    "frameworks": {
+      "net48": {
+        "targetAlias": "net48",
+        "dependencies": {
+          "RhinoCommon": {
+            "include": "Compile, Build, Native, ContentFiles, Analyzers, BuildTransitive",
+            "target": "Package",
+            "version": "[8.0.23304.9001, )"
+          }
+        },
+        "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.103\\RuntimeIdentifierGraph.json"
+      }
+    }
+  }
+}
