@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Drawing;
 using Rhino;
 using Rhino.Display;
@@ -27,8 +28,23 @@ internal sealed class StackPreviewConduit : DisplayConduit
         }
     }
 
+    protected override void PreDrawObject(DrawObjectEventArgs e)
+    {
+        if (_engine.GetManagedObjectIds(e.RhinoObject.Document).Contains(e.RhinoObject.Id))
+        {
+            e.DrawObject = false;
+        }
+    }
+
     protected override void PostDrawObjects(DrawEventArgs e)
     {
+        foreach (var objectId in _engine.GetManagedObjectIds(e.RhinoDoc))
+        {
+            var sourceObject = e.RhinoDoc.Objects.FindId(objectId);
+            var drawColor = GetPreviewColor(e.RhinoDoc, sourceObject);
+            DrawSourceWireframe(e.Display, sourceObject, drawColor);
+        }
+
         foreach (var stack in _engine.GetPreviewStacks(e.RhinoDoc))
         {
             var sourceObject = e.RhinoDoc.Objects.FindId(stack.SourceObjectId);
@@ -53,6 +69,20 @@ internal sealed class StackPreviewConduit : DisplayConduit
         return sourceMaterial is null ? new DisplayMaterial(fallbackColor) : new DisplayMaterial(sourceMaterial);
     }
 
+    private static void DrawSourceWireframe(DisplayPipeline display, RhinoObject? sourceObject, Color drawColor)
+    {
+        if (sourceObject is null ||
+            !HelloRhinoCommon.Runtime.GeometryConversion.TryGetSourceGeometry(sourceObject.Geometry, out var geometry, out _))
+        {
+            return;
+        }
+
+        foreach (var item in geometry)
+        {
+            DrawWireframeGeometry(display, item, drawColor);
+        }
+    }
+
     private static void DrawGeometry(DisplayPipeline display, GeometryBase geometry, Color drawColor, DisplayMaterial material)
     {
         switch (geometry)
@@ -73,6 +103,28 @@ internal sealed class StackPreviewConduit : DisplayConduit
                 break;
             case SubD subD:
                 display.DrawSubDShaded(subD, material);
+                display.DrawSubDWires(subD, drawColor, 1);
+                break;
+        }
+    }
+
+    private static void DrawWireframeGeometry(DisplayPipeline display, GeometryBase geometry, Color drawColor)
+    {
+        switch (geometry)
+        {
+            case Rhino.Geometry.Point point:
+                display.DrawPoint(point.Location, PointStyle.Simple, 4, drawColor);
+                break;
+            case Curve curve:
+                display.DrawCurve(curve, drawColor, 1);
+                break;
+            case Brep brep:
+                display.DrawBrepWires(brep, drawColor, 1);
+                break;
+            case Mesh mesh:
+                display.DrawMeshWires(mesh, drawColor);
+                break;
+            case SubD subD:
                 display.DrawSubDWires(subD, drawColor, 1);
                 break;
         }

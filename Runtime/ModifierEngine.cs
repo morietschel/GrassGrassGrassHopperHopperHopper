@@ -5,7 +5,6 @@ using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
-using System.Text.Json;
 using Grasshopper.GUI;
 using Grasshopper.GUI.Base;
 using Grasshopper.Kernel;
@@ -16,7 +15,6 @@ using Grasshopper.Kernel.Types;
 using HelloRhinoCommon.Models;
 using HelloRhinoCommon.UI;
 using Rhino;
-using Rhino.Display;
 using Rhino.DocObjects;
 using Rhino.Geometry;
 
@@ -25,7 +23,6 @@ namespace HelloRhinoCommon.Runtime;
 internal sealed class ModifierEngine : IDisposable
 {
     private const string LogPrefix = "GGH";
-    private const string DisplayModeOverrideBackupKey = "GGH.PreModifierDisplayModeOverrides";
     private static readonly string[] InputAliases = { "GeomIn", "GeoIn" };
     private static readonly string[] OutputAliases = { "GeomOut", "GeoOut" };
 
@@ -141,6 +138,24 @@ internal sealed class ModifierEngine : IDisposable
         }
     }
 
+    public IEnumerable<Guid> GetManagedObjectIds(RhinoDoc? doc)
+    {
+        if (doc is null)
+        {
+            yield break;
+        }
+
+        if (!_documents.TryGetValue(doc.RuntimeSerialNumber, out var documentState))
+        {
+            yield break;
+        }
+
+        foreach (var objectId in documentState.Stacks.Keys)
+        {
+            yield return objectId;
+        }
+    }
+
     public bool AddStep(RhinoDoc doc, Guid objectId, string path, out string message)
     {
         message = string.Empty;
@@ -181,11 +196,6 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        if (spec.Steps.Count == 1)
-        {
-            ApplySourceWireframeDisplay(doc, objectId);
-        }
-
         ResetStackRuntime(doc, objectId, spec);
         message = $"Added modifier: {Path.GetFileName(path)}";
         Log($"{message} StackCount={spec.Steps.Count}");
@@ -218,11 +228,6 @@ internal sealed class ModifierEngine : IDisposable
             message = "Failed to update the modifier stack.";
             Log(message);
             return false;
-        }
-
-        if (spec.Steps.Count == 0)
-        {
-            RestoreSourceDisplayMode(doc, objectId);
         }
 
         ResetStackRuntime(doc, objectId, spec);
@@ -1700,7 +1705,7 @@ internal sealed class ModifierEngine : IDisposable
 
     private void UpdateConduitState()
     {
-        var enabled = _documents.Values.Any(d => d.Stacks.Values.Any(s => s.PreviewGeometry.Count > 0));
+        var enabled = _documents.Values.Any(d => d.Stacks.Count > 0);
         if (_previewConduit.Enabled != enabled)
         {
             Log($"Preview conduit {(enabled ? "enabled" : "disabled")}.");
@@ -1756,121 +1761,6 @@ internal sealed class ModifierEngine : IDisposable
     private static List<GeometryBase> CloneGeometry(IEnumerable<GeometryBase> geometry)
     {
         return geometry.Select(g => g.Duplicate()).ToList();
-    }
-
-    private void ApplySourceWireframeDisplay(RhinoDoc doc, Guid objectId)
-    {
-        var rhinoObject = doc.Objects.FindId(objectId);
-        if (rhinoObject is null)
-        {
-            return;
-        }
-
-        var wireframeMode = DisplayModeDescription.GetDisplayMode(DisplayModeDescription.WireframeId);
-        if (wireframeMode is null)
-        {
-            Log($"Failed to resolve wireframe display mode. Object={objectId}");
-            return;
-        }
-
-        var attributes = rhinoObject.Attributes.Duplicate();
-        if (!attributes.UserDictionary.ContainsKey(DisplayModeOverrideBackupKey))
-        {
-            var overrides = CaptureDisplayModeOverrides(doc, attributes);
-            attributes.UserDictionary[DisplayModeOverrideBackupKey] = JsonSerializer.Serialize(overrides);
-        }
-
-        if (!attributes.SetDisplayModeOverride(wireframeMode))
-        {
-            Log($"Failed to apply wireframe display override. Object={objectId}");
-            return;
-        }
-
-        if (!doc.Objects.ModifyAttributes(rhinoObject, attributes, true))
-        {
-            Log($"Failed to persist wireframe display override. Object={objectId}");
-        }
-    }
-
-    private void RestoreSourceDisplayMode(RhinoDoc doc, Guid objectId)
-    {
-        var rhinoObject = doc.Objects.FindId(objectId);
-        if (rhinoObject is null)
-        {
-            return;
-        }
-
-        var attributes = rhinoObject.Attributes.Duplicate();
-        if (!attributes.UserDictionary.ContainsKey(DisplayModeOverrideBackupKey))
-        {
-            return;
-        }
-
-        var overrides = LoadDisplayModeOverrides(attributes.UserDictionary[DisplayModeOverrideBackupKey] as string);
-        attributes.RemoveDisplayModeOverride();
-
-        foreach (var view in doc.Views.GetViewList(ViewTypeFilter.All))
-        {
-            var viewportId = view.ActiveViewportID;
-            var match = overrides.FirstOrDefault(overrideSpec => overrideSpec.ViewportId == viewportId);
-            if (match.ViewportId == Guid.Empty)
-            {
-                continue;
-            }
-
-            var mode = DisplayModeDescription.GetDisplayMode(match.DisplayModeId);
-            if (mode is not null)
-            {
-                attributes.SetDisplayModeOverride(mode, viewportId);
-            }
-        }
-
-        attributes.UserDictionary.Remove(DisplayModeOverrideBackupKey);
-        if (!doc.Objects.ModifyAttributes(rhinoObject, attributes, true))
-        {
-            Log($"Failed to restore original display override. Object={objectId}");
-        }
-    }
-
-    private static List<DisplayModeOverrideState> CaptureDisplayModeOverrides(RhinoDoc doc, ObjectAttributes attributes)
-    {
-        var overrides = new List<DisplayModeOverrideState>();
-
-        foreach (var view in doc.Views.GetViewList(ViewTypeFilter.All))
-        {
-            var viewportId = view.ActiveViewportID;
-            if (!attributes.HasDisplayModeOverride(viewportId))
-            {
-                continue;
-            }
-
-            var displayModeId = attributes.GetDisplayModeOverride(viewportId);
-            if (displayModeId == Guid.Empty)
-            {
-                continue;
-            }
-
-            overrides.Add(new DisplayModeOverrideState(viewportId, displayModeId));
-        }
-
-        return overrides;
-    }
-
-    private static List<DisplayModeOverrideState> LoadDisplayModeOverrides(string? json)
-    {
-        if (string.IsNullOrWhiteSpace(json))
-        {
-            return new List<DisplayModeOverrideState>();
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<DisplayModeOverrideState>>(json) ?? new List<DisplayModeOverrideState>();
-        }
-        catch
-        {
-            return new List<DisplayModeOverrideState>();
-        }
     }
 
     private ulong NextRevision()
@@ -2169,8 +2059,6 @@ internal sealed class ModifierEngine : IDisposable
     private readonly record struct QueuedStack(uint DocumentSerial, Guid ObjectId, string Key);
 
     public readonly record struct PreviewStack(Guid SourceObjectId, IReadOnlyList<GeometryBase> Geometry);
-
-    private readonly record struct DisplayModeOverrideState(Guid ViewportId, Guid DisplayModeId);
 
     private sealed record DefinitionContract(
         ModifierInputDescriptor? SceneInput,
