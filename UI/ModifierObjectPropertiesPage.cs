@@ -12,7 +12,7 @@ public sealed class ModifierObjectPropertiesPage : ObjectPropertiesPage
 
     public override string EnglishPageTitle => "GGH Stack";
 
-    public override string PageIconEmbeddedResourceString => "HelloRhinoCommon.Logo_1.svg";
+    public override string PageIconEmbeddedResourceString => "HelloRhinoCommon.Logo_3.ico";
 
     public override int Index => int.MaxValue;
 

@@ -30,6 +30,8 @@
   
   <ItemGroup>
     <EmbeddedResource Include="Logo_1.svg" />
+    <EmbeddedResource Include="Logo_2.ico" />
+    <EmbeddedResource Include="Logo_3.ico" />
 
     <Reference Include="RhinoCommon" Condition="Exists('$(RhinoCommonHintPath)')">
       <HintPath>$(RhinoCommonHintPath)</HintPath>
