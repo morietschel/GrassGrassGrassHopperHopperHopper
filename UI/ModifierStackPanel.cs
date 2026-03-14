@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Runtime.InteropServices;
 using Eto.Forms;
 using HelloRhinoCommon.Models;
@@ -13,9 +15,12 @@ public sealed class ModifierStackPanel : Panel
 {
     private readonly Label _selectionLabel;
     private readonly Label _statusLabel;
+    private readonly Label _folderLabel;
     private readonly Scrollable _rowsScrollable;
     private readonly Button _addButton;
     private readonly Button _refreshButton;
+    private readonly Button _importFolderButton;
+    private readonly List<string> _importedDefinitionPaths = new();
 
     public ModifierStackPanel()
     {
@@ -29,6 +34,13 @@ public sealed class ModifierStackPanel : Panel
         {
             Text = string.Empty,
             Wrap = WrapMode.Word,
+        };
+
+        _folderLabel = new Label
+        {
+            Text = "No folder selected.",
+            Wrap = WrapMode.Word,
+            TextColor = Eto.Drawing.Colors.Gray,
         };
 
         _rowsScrollable = new Scrollable
@@ -48,6 +60,12 @@ public sealed class ModifierStackPanel : Panel
         };
         _refreshButton.Click += OnRefreshClicked;
 
+        _importFolderButton = new Button
+        {
+            Text = "Import Folder…",
+        };
+        _importFolderButton.Click += OnImportFolderClicked;
+
         Content = new DynamicLayout
         {
             Padding = 10,
@@ -56,6 +74,7 @@ public sealed class ModifierStackPanel : Panel
             {
                 _selectionLabel,
                 _statusLabel,
+                _folderLabel,
                 _rowsScrollable,
                 new StackLayout
                 {
@@ -65,6 +84,7 @@ public sealed class ModifierStackPanel : Panel
                     {
                         _addButton,
                         _refreshButton,
+                        _importFolderButton,
                     },
                 },
             },
@@ -142,6 +162,51 @@ public sealed class ModifierStackPanel : Panel
         }
     }
 
+    private void OnImportFolderClicked(object? sender, EventArgs e)
+    {
+        using var dialog = new Eto.Forms.OpenFileDialog
+        {
+            Title = "Pick a file in the folder that contains .gh/.ghx files",
+            MultiSelect = false,
+        };
+        dialog.Filters.Add(new FileFilter("Grasshopper Definitions", ".gh", ".ghx"));
+
+        if (dialog.ShowDialog(RhinoEtoApp.MainWindow) != Eto.Forms.DialogResult.Ok || string.IsNullOrWhiteSpace(dialog.FileName))
+        {
+            return;
+        }
+
+        var folder = Path.GetDirectoryName(dialog.FileName);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            MessageBox.Show("Could not determine folder from selected file.", MessageBoxType.Error);
+            return;
+        }
+        _folderLabel.Text = $"Selected folder: {folder}";
+        _importedDefinitionPaths.Clear();
+
+        try
+        {
+            var ghFiles = Directory.EnumerateFiles(folder, "*.gh", SearchOption.AllDirectories);
+            var ghxFiles = Directory.EnumerateFiles(folder, "*.ghx", SearchOption.AllDirectories);
+            _importedDefinitionPaths.AddRange(ghFiles);
+            _importedDefinitionPaths.AddRange(ghxFiles);
+            _importedDefinitionPaths.Sort(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Failed to scan folder: {ex.Message}", MessageBoxType.Error);
+            return;
+        }
+
+        if (_importedDefinitionPaths.Count == 0)
+        {
+            _folderLabel.Text = $"No .gh/.ghx files found in: {folder}";
+        }
+
+        RefreshView();
+    }
+
     private void RefreshView()
     {
         var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
@@ -159,6 +224,17 @@ public sealed class ModifierStackPanel : Panel
             Padding = 0,
             Spacing = new Eto.Drawing.Size(4, 4),
         };
+
+        if (_importedDefinitionPaths.Count > 0)
+        {
+            rows.AddRow(new Label
+            {
+                Text = "Imported definitions (click an icon to add):",
+                Wrap = WrapMode.Word,
+                TextColor = Eto.Drawing.Colors.MediumBlue,
+            });
+            rows.AddRow(CreateImportedDefinitionRow(state));
+        }
 
         if (!state.CanEdit)
         {
@@ -185,6 +261,44 @@ public sealed class ModifierStackPanel : Panel
 
         rows.Add(null);
         _rowsScrollable.Content = rows;
+    }
+
+    private Control CreateImportedDefinitionRow(ModifierPanelState state)
+    {
+        var layout = new DynamicLayout
+        {
+            Padding = 0,
+            Spacing = new Eto.Drawing.Size(6, 6),
+        };
+
+        for (var i = 0; i < _importedDefinitionPaths.Count; i++)
+        {
+            if (i % 3 == 0)
+            {
+                layout.BeginHorizontal();
+            }
+
+            var path = _importedDefinitionPaths[i];
+            var fileName = Path.GetFileName(path);
+            var iconButton = new Button
+            {
+                Text = "🧩 " + fileName,
+                ToolTip = path,
+                Width = 200,
+            };
+            iconButton.Click += (_, _) => AddStepFromImportedDefinition(state, path);
+            layout.Add(iconButton);
+
+            if (i % 3 == 2 || i == _importedDefinitionPaths.Count - 1)
+            {
+                layout.EndHorizontal();
+            }
+        }
+
+        return new Panel
+        {
+            Content = layout,
+        };
     }
 
     private Control CreateStepRow(Guid objectId, ModifierStepPanelState step)
@@ -315,7 +429,33 @@ public sealed class ModifierStackPanel : Panel
             Content = rowLayout,
         };
     }
+    private void AddStepFromImportedDefinition(ModifierPanelState state, string path)
+    {
+        var doc = RhinoDoc.ActiveDoc;
+        if (doc is null)
+        {
+            return;
+        }
 
+        if (!state.SelectedObjectId.HasValue)
+        {
+            MessageBox.Show("Select an object first to add a modifier step.", MessageBoxType.Warning);
+            return;
+        }
+
+        if (!HelloRhinoCommonPlugin.Instance.Engine.AddStep(doc, state.SelectedObjectId.Value, path, out var message))
+        {
+            MessageBox.Show(message, MessageBoxType.Error);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            RhinoApp.WriteLine(message);
+        }
+
+        RefreshView();
+    }
     private Control CreateInputRow(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
     {
         var layout = new DynamicLayout
