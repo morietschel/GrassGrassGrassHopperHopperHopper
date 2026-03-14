@@ -29,6 +29,8 @@
   </PropertyGroup>
   
   <ItemGroup>
+    <EmbeddedResource Include="Logo_1.svg" />
+
     <Reference Include="RhinoCommon" Condition="Exists('$(RhinoCommonHintPath)')">
       <HintPath>$(RhinoCommonHintPath)</HintPath>
       <Private>false</Private>
