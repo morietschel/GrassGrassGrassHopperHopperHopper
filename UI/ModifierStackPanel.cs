@@ -423,6 +423,12 @@ public sealed class ModifierStackPanel : Panel
             }
         };
 
+        var applyButton = new Button
+        {
+            Text = step.Index == 0 ? "Apply" : "Apply Stack",
+        };
+        applyButton.Click += (_, _) => ApplyStep(objectId, step.Index);
+
         var content = new StackLayout
         {
             Orientation = Orientation.Vertical,
@@ -441,6 +447,7 @@ public sealed class ModifierStackPanel : Panel
                 editButton,
                 upButton,
                 downButton,
+                applyButton,
                 removeButton,
             },
         });
@@ -1068,6 +1075,43 @@ public sealed class ModifierStackPanel : Panel
         }
 
         HelloRhinoCommonPlugin.Instance.Engine.MoveStep(doc, objectId, index, offset, out var message);
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            RhinoApp.WriteLine(message);
+        }
+    }
+
+    private static void ApplyStep(Guid objectId, int stepIndex)
+    {
+        var doc = RhinoDoc.ActiveDoc;
+        if (doc is null)
+        {
+            return;
+        }
+
+        if (stepIndex > 0)
+        {
+            var warning =
+                $"Apply Stack will bake modifiers 1 through {stepIndex + 1} into the selected Rhino object and remove those modifiers from the stack.\n\n" +
+                "This action is irreversible. Continue?";
+            var result = MessageBox.Show(
+                warning,
+                "Apply Stack",
+                MessageBoxButtons.YesNo,
+                MessageBoxType.Warning,
+                MessageBoxDefaultButton.No);
+            if (result != DialogResult.Yes)
+            {
+                return;
+            }
+        }
+
+        if (!HelloRhinoCommonPlugin.Instance.Engine.ApplyThroughStep(doc, objectId, stepIndex, out var message))
+        {
+            MessageBox.Show(message, MessageBoxType.Error);
+            return;
+        }
+
         if (!string.IsNullOrWhiteSpace(message))
         {
             RhinoApp.WriteLine(message);
