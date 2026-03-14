@@ -17,6 +17,8 @@ namespace HelloRhinoCommon
     ///</summary>
     public class HelloRhinoCommonPlugin : PlugIn
     {
+        private bool _openedPropertiesOnStartup;
+
         public HelloRhinoCommonPlugin()
         {
             Instance = this;
@@ -25,16 +27,22 @@ namespace HelloRhinoCommon
         ///<summary>Gets the only instance of the HelloRhinoCommonPlugin plug-in.</summary>
         public static HelloRhinoCommonPlugin Instance { get; private set; } = null!;
 
+        public override PlugInLoadTime LoadTime => PlugInLoadTime.AtStartup;
+
         internal ModifierEngine Engine { get; private set; } = null!;
 
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
             Engine = new ModifierEngine();
+            RhinoApp.Initialized += OnRhinoInitialized;
+            RhinoApp.Idle += OnRhinoIdle;
             return LoadReturnCode.Success;
         }
 
         protected override void OnShutdown()
         {
+            RhinoApp.Initialized -= OnRhinoInitialized;
+            RhinoApp.Idle -= OnRhinoIdle;
             Engine.Dispose();
             base.OnShutdown();
         }
@@ -42,6 +50,39 @@ namespace HelloRhinoCommon
         protected override void ObjectPropertiesPages(ObjectPropertiesPageCollection collection)
         {
             collection.Add(new ModifierObjectPropertiesPage());
+        }
+
+        private void OnRhinoInitialized(object? sender, EventArgs e)
+        {
+            RhinoApp.Initialized -= OnRhinoInitialized;
+            RhinoApp.InvokeOnUiThread(OpenPropertiesPanelOnStartup);
+        }
+
+        private void OnRhinoIdle(object? sender, EventArgs e)
+        {
+            if (_openedPropertiesOnStartup)
+            {
+                RhinoApp.Idle -= OnRhinoIdle;
+                return;
+            }
+
+            RhinoApp.Idle -= OnRhinoIdle;
+            OpenPropertiesPanelOnStartup();
+        }
+
+        private void OpenPropertiesPanelOnStartup()
+        {
+            if (_openedPropertiesOnStartup)
+            {
+                return;
+            }
+
+            _openedPropertiesOnStartup = true;
+
+            if (!Panels.IsPanelVisible(PanelIds.ObjectProperties))
+            {
+                Panels.OpenPanel(PanelIds.ObjectProperties);
+            }
         }
     }
 }
