@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Reflection;
 using HelloRhinoCommon.Runtime;
 using HelloRhinoCommon.UI;
 using Rhino;
@@ -30,14 +29,6 @@ namespace HelloRhinoCommon
 
         protected override LoadReturnCode OnLoad(ref string errorMessage)
         {
-            Panels.RegisterPanel(
-                this,
-                typeof(ModifierStackPanel),
-                "GGH Stack",
-                Assembly.GetExecutingAssembly(),
-                "HelloRhinoCommon.EmbeddedResources.plugin-utility.ico",
-                PanelType.PerDoc);
-
             Engine = new ModifierEngine();
             return LoadReturnCode.Success;
         }
@@ -46,6 +37,11 @@ namespace HelloRhinoCommon
         {
             Engine.Dispose();
             base.OnShutdown();
+        }
+
+        protected override void ObjectPropertiesPages(ObjectPropertiesPageCollection collection)
+        {
+            collection.Add(new ModifierObjectPropertiesPage());
         }
     }
 }
