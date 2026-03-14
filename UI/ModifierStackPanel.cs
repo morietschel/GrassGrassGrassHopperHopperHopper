@@ -94,6 +94,11 @@ public sealed class ModifierStackPanel : Panel
         RefreshView();
     }
 
+    public void RefreshNow()
+    {
+        RefreshView();
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
