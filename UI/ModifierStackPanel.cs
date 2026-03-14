@@ -19,6 +19,11 @@ public sealed class ModifierStackPanel : Panel
 {
     private const int MaxSliderResolution = 10000;
     private const int LinkButtonWidth = 32;
+    private const int ToolbarButtonWidth = 44;
+    private const int ToolbarSpacing = 8;
+    private const int PanelPadding = 12;
+    private const int MinDefinitionPickerWidth = 100;
+    private const int PreferredDefinitionPickerWidth = 200;
 
     private readonly Label _statusLabel;
     private readonly Scrollable _rowsScrollable;
@@ -79,7 +84,7 @@ public sealed class ModifierStackPanel : Panel
         {
             Text = "+",
             ToolTip = "Add a modifier from file.",
-            Width = 44,
+            Width = ToolbarButtonWidth,
         };
         _addButton.Click += OnAddClicked;
 
@@ -87,7 +92,7 @@ public sealed class ModifierStackPanel : Panel
         {
             Text = "↻",
             ToolTip = "Refresh the current modifier stack.",
-            Width = 44,
+            Width = ToolbarButtonWidth,
         };
         _refreshButton.Click += OnRefreshClicked;
 
@@ -103,6 +108,18 @@ public sealed class ModifierStackPanel : Panel
             ExpandContentWidth = true,
         };
 
+        var toolbarRow = new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = ToolbarSpacing,
+            Items =
+            {
+                _definitionPicker,
+                _addButton,
+                _refreshButton,
+            },
+        };
+
         Content = new StackLayout
         {
             Orientation = Orientation.Vertical,
@@ -110,23 +127,16 @@ public sealed class ModifierStackPanel : Panel
             Spacing = 12,
             Items =
             {
-                new StackLayout
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 8,
-                    Items =
-                    {
-                        new StackLayoutItem(_definitionPicker, true),
-                        _addButton,
-                        _refreshButton,
-                    },
-                },
+                new StackLayoutItem(toolbarRow, HorizontalAlignment.Left),
                 _statusLabel,
                 new StackLayoutItem(_rowsScrollable, true),
             },
         };
 
+        SizeChanged += (_, _) => UpdateDefinitionPickerWidth();
+
         HelloRhinoCommonPlugin.Instance.Engine.StateChanged += OnEngineStateChanged;
+        UpdateDefinitionPickerWidth();
         RefreshView();
     }
 
@@ -216,6 +226,18 @@ public sealed class ModifierStackPanel : Panel
         }
 
         TryAddStep(state, _definitionChoices[selectedIndex - 1].FullPath);
+    }
+
+    private void UpdateDefinitionPickerWidth()
+    {
+        var availableWidth = Width - (PanelPadding * 2) - (ToolbarButtonWidth * 2) - (ToolbarSpacing * 2);
+        if (availableWidth <= 0)
+        {
+            _definitionPicker.Width = PreferredDefinitionPickerWidth;
+            return;
+        }
+
+        _definitionPicker.Width = Math.Max(MinDefinitionPickerWidth, Math.Min(PreferredDefinitionPickerWidth, availableWidth));
     }
 
     private void RefreshView()
