@@ -223,7 +223,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, spec.Steps.Count - 1);
         message = $"Added modifier: {Path.GetFileName(path)}";
         Log($"{message} StackCount={spec.Steps.Count}");
         return true;
@@ -299,6 +299,13 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
+        var runtime = TryGetStackRuntime(doc, objectId);
+        if (runtime is not null && index < runtime.StepRuntimes.Count)
+        {
+            runtime.DisposeStep(index);
+            runtime.StepRuntimes.RemoveAt(index);
+        }
+
         spec.Steps.RemoveAt(index);
         if (!ModifierStackStorage.Save(doc, objectId, spec))
         {
@@ -307,7 +314,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = "Removed modifier step.";
         Log($"{message} StackCount={spec.Steps.Count}");
         return true;
@@ -335,6 +342,13 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         (spec.Steps[index], spec.Steps[targetIndex]) = (spec.Steps[targetIndex], spec.Steps[index]);
+
+        var runtime = TryGetStackRuntime(doc, objectId);
+        if (runtime is not null && index < runtime.StepRuntimes.Count && targetIndex < runtime.StepRuntimes.Count)
+        {
+            (runtime.StepRuntimes[index], runtime.StepRuntimes[targetIndex]) = (runtime.StepRuntimes[targetIndex], runtime.StepRuntimes[index]);
+        }
+
         if (!ModifierStackStorage.Save(doc, objectId, spec))
         {
             message = "Failed to update the modifier stack.";
@@ -342,7 +356,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, Math.Min(index, targetIndex));
         message = "Moved modifier step.";
         Log($"{message} NewIndex={targetIndex}");
         return true;
@@ -382,7 +396,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = enabled ? "Modifier enabled." : "Modifier disabled.";
         Log(message);
         return true;
@@ -416,7 +430,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = "Updated modifier input.";
         Log(message);
         return true;
@@ -449,7 +463,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = "Updated modifier input link.";
         Log(message);
         return true;
@@ -482,7 +496,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = "Updated modifier input link.";
         Log(message);
         return true;
@@ -516,7 +530,7 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
-        ResetStackRuntime(doc, objectId, spec);
+        InvalidateStackFromStep(doc, objectId, spec, index);
         message = "Cleared modifier input link.";
         Log(message);
         return true;
@@ -3225,6 +3239,24 @@ internal sealed class ModifierEngine : IDisposable
             : $"{rhinoObject.ObjectType} {rhinoObject.Id}";
     }
 
+    private void InvalidateStackFromStep(RhinoDoc doc, Guid objectId, ModifierStackSpec spec, int fromStepIndex)
+    {
+        if (spec.Steps.Count == 0)
+        {
+            Log($"InvalidateStackFromStep removing empty stack. Object={objectId}");
+            RemoveStackRuntime(doc, objectId);
+            return;
+        }
+
+        UpdateObjectDependencies(doc, objectId, spec);
+        var runtime = GetOrCreateStackRuntime(doc, objectId);
+        runtime.EnsureStepCapacity(spec.Steps.Count);
+        runtime.InvalidateFromStep(fromStepIndex);
+        Log($"Stack invalidated from step {fromStepIndex}. Object={objectId}, StepCount={spec.Steps.Count}");
+        QueueEvaluation(doc, objectId);
+        RaiseStateChanged();
+    }
+
     private void ResetStackRuntime(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
     {
         if (spec.Steps.Count == 0)
@@ -3513,6 +3545,18 @@ internal sealed class ModifierEngine : IDisposable
             {
                 StepRuntimes.Add(null);
                 _stepOutputs.Add(new List<StepOutputValue>());
+            }
+        }
+
+        public void InvalidateFromStep(int fromIndex)
+        {
+            for (var i = fromIndex; i < StepRuntimes.Count; i++)
+            {
+                var step = StepRuntimes[i];
+                if (step is not null)
+                {
+                    step.LastInputRevision = ulong.MaxValue;
+                }
             }
         }
 
