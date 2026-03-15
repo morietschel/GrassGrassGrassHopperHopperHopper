@@ -24,6 +24,8 @@ public sealed class ModifierStackPanel : Panel
     private const int PanelPadding = 12;
     private const int MinDefinitionPickerWidth = 100;
     private const int PreferredDefinitionPickerWidth = 200;
+    private const int MaxPanelWidth = PreferredDefinitionPickerWidth + (ToolbarButtonWidth * 2) + (ToolbarSpacing * 2) + (PanelPadding * 2) + 8;
+    private const int MaxOutputPreviewCharacters = 40;
 
     private readonly Label _statusLabel;
     private readonly Scrollable _rowsScrollable;
@@ -144,9 +146,14 @@ public sealed class ModifierStackPanel : Panel
             },
         };
 
-        SizeChanged += (_, _) => UpdateDefinitionPickerWidth();
+        SizeChanged += (_, _) =>
+        {
+            ClampPanelWidth();
+            UpdateDefinitionPickerWidth();
+        };
 
         HelloRhinoCommonPlugin.Instance.Engine.StateChanged += OnEngineStateChanged;
+        ClampPanelWidth();
         UpdateDefinitionPickerWidth();
         RefreshView();
     }
@@ -270,6 +277,14 @@ public sealed class ModifierStackPanel : Panel
         }
 
         _definitionPicker.Width = Math.Max(MinDefinitionPickerWidth, Math.Min(PreferredDefinitionPickerWidth, availableWidth));
+    }
+
+    private void ClampPanelWidth()
+    {
+        if (Width > MaxPanelWidth)
+        {
+            Width = MaxPanelWidth;
+        }
     }
 
     private void RefreshView()
@@ -576,15 +591,15 @@ public sealed class ModifierStackPanel : Panel
 
             foreach (var input in step.Inputs)
             {
-                childContent.Items.Add(CreateInputRow(objectId, step, input));
+                childContent.Items.Add(new StackLayoutItem(CreateInputRow(objectId, step, input), HorizontalAlignment.Stretch));
             }
 
             if (step.Outputs.Count > 0)
             {
-                childContent.Items.Add(CreateOutputSummaryRow(step.Outputs));
+                childContent.Items.Add(new StackLayoutItem(CreateOutputSummaryRow(step.Outputs), HorizontalAlignment.Stretch));
             }
 
-            container.Items.Add(childContent);
+            container.Items.Add(new StackLayoutItem(childContent, HorizontalAlignment.Stretch));
         }
 
         return container;
@@ -725,7 +740,7 @@ public sealed class ModifierStackPanel : Panel
             Spacing = 4,
             Items =
             {
-                CreateInputHeader(objectId, step, input, toolTip),
+                new StackLayoutItem(CreateInputHeader(objectId, step, input, toolTip), HorizontalAlignment.Stretch),
                 toggle,
             },
         };
@@ -738,28 +753,30 @@ public sealed class ModifierStackPanel : Panel
     {
         SetToolTip(editor, toolTip);
 
+        var row = new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items =
+            {
+                new Label
+                {
+                    Text = $"{input.Label}:",
+                    Wrap = WrapMode.Word,
+                    ToolTip = toolTip,
+                },
+                new StackLayoutItem(editor, true),
+                new StackLayoutItem(CreateInputLinkButton(objectId, step, input), HorizontalAlignment.Right),
+            },
+        };
+
         var block = new StackLayout
         {
             Orientation = Orientation.Vertical,
             Spacing = 4,
             Items =
             {
-                new StackLayout
-                {
-                    Orientation = Orientation.Horizontal,
-                    Spacing = 6,
-                    Items =
-                    {
-                        new Label
-                        {
-                            Text = $"{input.Label}:",
-                            Wrap = WrapMode.Word,
-                            ToolTip = toolTip,
-                        },
-                        new StackLayoutItem(editor, true),
-                        CreateInputLinkButton(objectId, step, input),
-                    },
-                },
+                new StackLayoutItem(row, HorizontalAlignment.Stretch),
             },
         };
 
@@ -769,7 +786,7 @@ public sealed class ModifierStackPanel : Panel
 
     private Control CreateInputHeader(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input, string? toolTip)
     {
-        return new StackLayout
+        var row = new StackLayout
         {
             Orientation = Orientation.Horizontal,
             Spacing = 6,
@@ -781,7 +798,16 @@ public sealed class ModifierStackPanel : Panel
                     Wrap = WrapMode.Word,
                     ToolTip = toolTip,
                 }, true),
-                CreateInputLinkButton(objectId, step, input),
+                new StackLayoutItem(CreateInputLinkButton(objectId, step, input), HorizontalAlignment.Right),
+            },
+        };
+
+        return new StackLayout
+        {
+            Orientation = Orientation.Vertical,
+            Items =
+            {
+                new StackLayoutItem(row, HorizontalAlignment.Stretch),
             },
         };
     }
@@ -1274,13 +1300,25 @@ public sealed class ModifierStackPanel : Panel
 
     private static Control CreateOutputSummaryRow(IReadOnlyList<ModifierStepOutputPanelState> outputs)
     {
-        var summary = new Label
-        {
-            Text = string.Join("   ", outputs.Select(output => $"{output.Label}: {output.DisplayValue}")),
-            Wrap = WrapMode.Word,
-        };
         var toolTip = BuildOutputToolTip(outputs);
-        SetToolTip(summary, toolTip);
+        var outputLines = new StackLayout
+        {
+            Orientation = Orientation.Vertical,
+            Spacing = 2,
+        };
+
+        foreach (var output in outputs)
+        {
+            var fullText = $"{output.Label}: {output.DisplayValue}";
+            var line = new Label
+            {
+                Text = TruncateWithEllipsis(fullText, MaxOutputPreviewCharacters),
+                Wrap = WrapMode.Word,
+                TextAlignment = TextAlignment.Left,
+            };
+            SetToolTip(line, AppendToolTip(toolTip, fullText));
+            outputLines.Items.Add(new StackLayoutItem(line, HorizontalAlignment.Stretch));
+        }
 
         return new StackLayout
         {
@@ -1288,14 +1326,25 @@ public sealed class ModifierStackPanel : Panel
             Spacing = 4,
             Items =
             {
-                new Label
+                new StackLayoutItem(new Label
                 {
                     Text = "Outputs",
+                    TextAlignment = TextAlignment.Left,
                     ToolTip = toolTip,
-                },
-                summary,
+                }, HorizontalAlignment.Stretch),
+                new StackLayoutItem(outputLines, HorizontalAlignment.Stretch),
             },
         };
+    }
+
+    private static string TruncateWithEllipsis(string text, int maxLength)
+    {
+        if (string.IsNullOrEmpty(text) || text.Length <= maxLength || maxLength < 4)
+        {
+            return text;
+        }
+
+        return text.Substring(0, maxLength - 3) + "...";
     }
 
     private static void SetToolTip(Control control, string? toolTip)
