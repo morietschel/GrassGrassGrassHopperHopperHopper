@@ -24,7 +24,6 @@ public sealed class ModifierStackPanel : Panel
     private const int PanelPadding = 12;
     private const int MinDefinitionPickerWidth = 100;
     private const int PreferredDefinitionPickerWidth = 200;
-    private const int MaxPanelWidth = PreferredDefinitionPickerWidth + (ToolbarButtonWidth * 2) + (ToolbarSpacing * 2) + (PanelPadding * 2) + 8;
     private const int MaxOutputPreviewCharacters = 40;
 
     private readonly Label _statusLabel;
@@ -146,14 +145,9 @@ public sealed class ModifierStackPanel : Panel
             },
         };
 
-        SizeChanged += (_, _) =>
-        {
-            ClampPanelWidth();
-            UpdateDefinitionPickerWidth();
-        };
+        SizeChanged += (_, _) => UpdateDefinitionPickerWidth();
 
         HelloRhinoCommonPlugin.Instance.Engine.StateChanged += OnEngineStateChanged;
-        ClampPanelWidth();
         UpdateDefinitionPickerWidth();
         RefreshView();
     }
@@ -277,14 +271,6 @@ public sealed class ModifierStackPanel : Panel
         }
 
         _definitionPicker.Width = Math.Max(MinDefinitionPickerWidth, Math.Min(PreferredDefinitionPickerWidth, availableWidth));
-    }
-
-    private void ClampPanelWidth()
-    {
-        if (Width > MaxPanelWidth)
-        {
-            Width = MaxPanelWidth;
-        }
     }
 
     private void RefreshView()
