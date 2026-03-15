@@ -6,7 +6,7 @@ A modifier is a standard Grasshopper definition with a specific layout conventio
 
 **GeomIn** — Place a standalone `Geometry` param anywhere on the canvas (NOT inside the Inputs group). Set its NickName to `GeomIn`. Leave it **unwired** on its left side — the engine injects geometry into it at runtime.
 
-**GeomOut** — Place a `Geometry` param inside the **Outputs** group (see below). The engine reads whatever geometry lands on this param and passes it to the next modifier.
+**GeomOut** — Place a `Geometry` param inside the **Outputs** group (see below) and set its NickName to `GeomOut` or `GeoOut`. The engine reads whatever geometry lands on this param and passes it to the next modifier.
 
 Geometry flows as a **list**. If a modifier outputs 6 surfaces, the next modifier's GeomIn receives all 6 as a standard GH data list.
 
@@ -17,7 +17,7 @@ Create two GH groups with exact NickNames:
 | Group | Purpose |
 |-------|---------|
 | **Inputs** | Contains all user-facing input parameters (sliders, numbers, points, booleans, colors, geometry, strings) |
-| **Outputs** | Contains all output parameters — including GeomOut geometry params and any published value outputs (numbers, strings, etc.) |
+| **Outputs** | Contains all published output parameters — including the optional `GeomOut` geometry pipe and any published value outputs (numbers, strings, etc.) |
 
 ## Inputs Group
 
@@ -39,7 +39,7 @@ The param's **NickName** becomes its label in the modifier panel.
 
 Place params inside the Outputs group to publish values downstream. Other modifiers can **link** to these outputs.
 
-A `Geometry` param in the Outputs group automatically acts as a geometry output (equivalent to the legacy GeomOut nickname).
+`Geometry` params inside the Outputs group are published like any other output, but they only pipe into the next modifier when their NickName is `GeomOut` or `GeoOut`.
 
 ## Minimal Example
 
