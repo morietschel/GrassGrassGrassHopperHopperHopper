@@ -639,6 +639,71 @@ internal sealed class ModifierEngine : IDisposable
         return true;
     }
 
+    public bool BakeFinalResult(RhinoDoc doc, Guid objectId, out string message)
+    {
+        message = string.Empty;
+        Log($"BakeFinalResult requested. Object={objectId}");
+
+        var rhinoObject = doc.Objects.FindId(objectId);
+        if (rhinoObject is null)
+        {
+            message = "Selected object no longer exists.";
+            Log(message);
+            return false;
+        }
+
+        var spec = ModifierStackStorage.Load(rhinoObject);
+        if (spec.Steps.Count == 0)
+        {
+            message = "Selected object does not have any modifier steps.";
+            Log(message);
+            return false;
+        }
+
+        if (!TryEvaluateStackThroughStep(doc, objectId, rhinoObject, spec, spec.Steps.Count - 1, out var evaluatedGeometry, out var evaluationError))
+        {
+            message = evaluationError;
+            Log($"BakeFinalResult evaluation failed. Object={objectId}, Error={evaluationError}");
+            return false;
+        }
+
+        if (evaluatedGeometry.Count == 0)
+        {
+            message = "The final modifier result is empty; bake was cancelled.";
+            Log(message);
+            return false;
+        }
+
+        foreach (var geometry in evaluatedGeometry)
+        {
+            if (!TryEnsureSupportedApplyGeometry(geometry, out var unsupportedError))
+            {
+                message = unsupportedError.Replace("apply operation", "bake operation", StringComparison.Ordinal);
+                Log($"BakeFinalResult geometry validation failed. {message}");
+                return false;
+            }
+        }
+
+        var newObjectAttributes = rhinoObject.Attributes.Duplicate();
+        newObjectAttributes.UserDictionary.Remove(ModifierStackSpec.UserDictionaryKey);
+
+        for (var i = 0; i < evaluatedGeometry.Count; i++)
+        {
+            if (!TryAddGeometryObject(doc, evaluatedGeometry[i], newObjectAttributes, out var addError))
+            {
+                message = $"Failed to bake geometry item {i + 1}: {addError}";
+                Log($"BakeFinalResult add failed. Object={objectId}, Index={i}, Error={addError}");
+                return false;
+            }
+        }
+
+        message = evaluatedGeometry.Count == 1
+            ? "Baked final stack result as a new object."
+            : $"Baked final stack result as {evaluatedGeometry.Count} new objects.";
+        Log($"BakeFinalResult completed. Object={objectId}, BakedCount={evaluatedGeometry.Count}");
+        return true;
+    }
+
     public void Dispose()
     {
         if (_disposed)

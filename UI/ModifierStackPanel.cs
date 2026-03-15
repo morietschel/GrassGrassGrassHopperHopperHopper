@@ -30,6 +30,7 @@ public sealed class ModifierStackPanel : Panel
     private readonly DropDown _definitionPicker;
     private readonly Button _addButton;
     private readonly Button _refreshButton;
+    private readonly Button _bakeButton;
     private readonly List<string> _importedDefinitionPaths = new();
     private readonly List<DefinitionChoice> _definitionChoices = new();
     private readonly HashSet<string> _expandedStepKeys = new(StringComparer.Ordinal);
@@ -96,6 +97,13 @@ public sealed class ModifierStackPanel : Panel
         };
         _refreshButton.Click += OnRefreshClicked;
 
+        _bakeButton = new Button
+        {
+            Text = "Bake",
+            ToolTip = "Create new Rhino geometry from the final stack result.",
+        };
+        _bakeButton.Click += OnBakeClicked;
+
         _statusLabel = new Label
         {
             Text = string.Empty,
@@ -130,6 +138,7 @@ public sealed class ModifierStackPanel : Panel
                 new StackLayoutItem(toolbarRow, HorizontalAlignment.Left),
                 _statusLabel,
                 new StackLayoutItem(_rowsScrollable, true),
+                new StackLayoutItem(_bakeButton, HorizontalAlignment.Left),
             },
         };
 
@@ -204,6 +213,27 @@ public sealed class ModifierStackPanel : Panel
         }
     }
 
+    private void OnBakeClicked(object? sender, EventArgs e)
+    {
+        var doc = RhinoDoc.ActiveDoc;
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(doc);
+        if (!state.CanEdit || !state.SelectedObjectId.HasValue || doc is null)
+        {
+            return;
+        }
+
+        if (!HelloRhinoCommonPlugin.Instance.Engine.BakeFinalResult(doc, state.SelectedObjectId.Value, out var message))
+        {
+            MessageBox.Show(message, MessageBoxType.Error);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(message))
+        {
+            RhinoApp.WriteLine(message);
+        }
+    }
+
     private void OnDefinitionSelected(object? sender, EventArgs e)
     {
         if (_isUpdatingDefinitionPicker)
@@ -249,9 +279,11 @@ public sealed class ModifierStackPanel : Panel
 
         var canEdit = state.CanEdit && state.SelectedObjectId.HasValue;
         var canRefresh = canEdit && state.Steps.Count > 0;
+        var canBake = canEdit && state.Steps.Count > 0;
         _definitionPicker.Enabled = canEdit && _definitionChoices.Count > 0;
         _addButton.Enabled = canEdit;
         _refreshButton.Enabled = canRefresh;
+        _bakeButton.Enabled = canBake;
 
         _statusLabel.Visible = canEdit && !string.IsNullOrWhiteSpace(state.StatusMessage);
         _statusLabel.Text = state.StatusMessage;
