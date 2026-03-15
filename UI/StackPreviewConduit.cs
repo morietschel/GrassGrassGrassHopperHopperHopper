@@ -98,7 +98,16 @@ internal sealed class StackPreviewConduit : DisplayConduit
                 display.DrawBrepWires(brep, drawColor, 1);
                 break;
             case Mesh mesh:
-                display.DrawMeshShaded(mesh, material);
+                if (mesh.VertexColors.Count == mesh.Vertices.Count)
+                {
+                    if (mesh.Normals.Count == 0)
+                        mesh.Normals.ComputeNormals();
+                    display.DrawMeshFalseColors(mesh);
+                }
+                else
+                {
+                    display.DrawMeshShaded(mesh, material);
+                }
                 display.DrawMeshWires(mesh, drawColor);
                 break;
             case SubD subD:
