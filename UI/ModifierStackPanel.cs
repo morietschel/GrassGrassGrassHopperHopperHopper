@@ -29,12 +29,13 @@ public sealed class ModifierStackPanel : Panel
 
     private readonly Label _statusLabel;
     private readonly Scrollable _rowsScrollable;
-    private readonly DropDown _definitionPicker;
+    private readonly ComboBox _definitionPicker;
     private readonly Button _addButton;
     private readonly Button _refreshButton;
     private readonly Button _bakeButton;
     private readonly List<string> _importedDefinitionPaths = new();
     private readonly List<DefinitionChoice> _definitionChoices = new();
+    private readonly List<DefinitionChoice> _visibleDefinitionChoices = new();
     private readonly HashSet<string> _expandedStepKeys = new(StringComparer.Ordinal);
 
     private bool _isUpdatingDefinitionPicker;
@@ -82,8 +83,12 @@ public sealed class ModifierStackPanel : Panel
 
     public ModifierStackPanel()
     {
-        _definitionPicker = new DropDown();
+        _definitionPicker = new ComboBox
+        {
+            ToolTip = "Search modifiers by name, then pick one to add.",
+        };
         _definitionPicker.SelectedIndexChanged += OnDefinitionSelected;
+        _definitionPicker.TextChanged += OnDefinitionPickerTextChanged;
 
         _addButton = new Button
         {
@@ -253,7 +258,7 @@ public sealed class ModifierStackPanel : Panel
         var selectedIndex = _definitionPicker.SelectedIndex;
         ResetDefinitionPicker();
 
-        if (selectedIndex <= 0 || selectedIndex > _definitionChoices.Count)
+        if (selectedIndex < 0 || selectedIndex >= _visibleDefinitionChoices.Count)
         {
             return;
         }
@@ -264,7 +269,17 @@ public sealed class ModifierStackPanel : Panel
             return;
         }
 
-        TryAddStep(state, _definitionChoices[selectedIndex - 1].FullPath);
+        TryAddStep(state, _visibleDefinitionChoices[selectedIndex].FullPath);
+    }
+
+    private void OnDefinitionPickerTextChanged(object? sender, EventArgs e)
+    {
+        if (_isUpdatingDefinitionPicker)
+        {
+            return;
+        }
+
+        UpdateDefinitionPickerFilter(_definitionPicker.Text);
     }
 
     private void UpdateDefinitionPickerWidth()
@@ -439,12 +454,7 @@ public sealed class ModifierStackPanel : Panel
             _definitionChoices.Add(new DefinitionChoice(path, BuildDefinitionDisplayName(path, duplicateNames)));
         }
 
-        _isUpdatingDefinitionPicker = true;
-        _definitionPicker.DataStore = new[] { "Add Modifier..." }
-            .Concat(_definitionChoices.Select(choice => choice.DisplayName))
-            .ToList();
-        _definitionPicker.SelectedIndex = 0;
-        _isUpdatingDefinitionPicker = false;
+        UpdateDefinitionPickerFilter(_definitionPicker.Text);
     }
 
     private static string BuildDefinitionDisplayName(string path, ISet<string> duplicateNames)
@@ -464,7 +474,28 @@ public sealed class ModifierStackPanel : Panel
     private void ResetDefinitionPicker()
     {
         _isUpdatingDefinitionPicker = true;
-        _definitionPicker.SelectedIndex = 0;
+        _definitionPicker.SelectedIndex = -1;
+        _definitionPicker.Text = string.Empty;
+        _isUpdatingDefinitionPicker = false;
+
+        UpdateDefinitionPickerFilter(string.Empty);
+    }
+
+    private void UpdateDefinitionPickerFilter(string? searchText)
+    {
+        var normalizedSearch = searchText?.Trim() ?? string.Empty;
+
+        _visibleDefinitionChoices.Clear();
+        _visibleDefinitionChoices.AddRange(string.IsNullOrWhiteSpace(normalizedSearch)
+            ? _definitionChoices
+            : _definitionChoices.Where(choice => choice.DisplayName.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)));
+
+        _isUpdatingDefinitionPicker = true;
+        _definitionPicker.DataStore = _visibleDefinitionChoices
+            .Select(choice => choice.DisplayName)
+            .ToList();
+        _definitionPicker.SelectedIndex = -1;
+        _definitionPicker.Text = normalizedSearch;
         _isUpdatingDefinitionPicker = false;
     }
 
