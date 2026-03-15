@@ -1613,7 +1613,13 @@ internal sealed class ModifierEngine : IDisposable
         var status = $"Linked from {sourceStepLabel} -> {sourceOutputLabel}.";
         if (hasRuntimeValue)
         {
-            status = $"{status} {runtimeOutput.DisplayValue}";
+            var displayValue = runtimeOutput.DisplayValue;
+            if (displayValue.Length > 10)
+            {
+                displayValue = displayValue.Substring(0, 7) + "...";
+            }
+
+            status = $"{status} {displayValue}";
         }
 
         return new LinkPresentationState(true, false, sourceStepLabel, sourceOutputLabel, status);
