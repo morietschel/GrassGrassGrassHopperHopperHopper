@@ -44,6 +44,8 @@ internal sealed class ModifierEngine : IDisposable
         RhinoDoc.ReplaceRhinoObject += OnReplaceRhinoObject;
         RhinoDoc.DeleteRhinoObject += OnDeleteRhinoObject;
         RhinoDoc.UndeleteRhinoObject += OnUndeleteRhinoObject;
+        RhinoDoc.EndOpenDocument += OnEndOpenDocument;
+        RhinoDoc.NewDocument += OnNewDocument;
         RhinoDoc.CloseDocument += OnCloseDocument;
         RhinoDoc.SelectObjects += OnSelectionChanged;
         RhinoDoc.DeselectObjects += OnSelectionChanged;
@@ -70,8 +72,17 @@ internal sealed class ModifierEngine : IDisposable
             };
         }
 
+        if (rhinoObject is null)
+        {
+            return new ModifierPanelState
+            {
+                StatusMessage = "Selected object is unavailable.",
+            };
+        }
+
         var spec = ModifierStackStorage.Load(rhinoObject);
-        var runtime = TryGetStackRuntime(doc, rhinoObject!.Id);
+        EnsureSavedStackRuntime(doc, rhinoObject.Id, spec);
+        var runtime = TryGetStackRuntime(doc, rhinoObject.Id);
         var stepContexts = new List<PanelStepContext>(spec.Steps.Count);
         for (var i = 0; i < spec.Steps.Count; i++)
         {
@@ -717,6 +728,8 @@ internal sealed class ModifierEngine : IDisposable
         RhinoDoc.ReplaceRhinoObject -= OnReplaceRhinoObject;
         RhinoDoc.DeleteRhinoObject -= OnDeleteRhinoObject;
         RhinoDoc.UndeleteRhinoObject -= OnUndeleteRhinoObject;
+        RhinoDoc.EndOpenDocument -= OnEndOpenDocument;
+        RhinoDoc.NewDocument -= OnNewDocument;
         RhinoDoc.CloseDocument -= OnCloseDocument;
         RhinoDoc.SelectObjects -= OnSelectionChanged;
         RhinoDoc.DeselectObjects -= OnSelectionChanged;
@@ -784,6 +797,18 @@ internal sealed class ModifierEngine : IDisposable
         var runtime = GetOrCreateStackRuntime(doc, e.ObjectId);
         runtime.RootRevision = NextRevision();
         QueueEvaluation(doc, e.ObjectId);
+    }
+
+    private void OnEndOpenDocument(object? sender, DocumentOpenEventArgs e)
+    {
+        Log($"Rhino document opened. Serial={e.Document.RuntimeSerialNumber}");
+        RestoreSavedStacks(e.Document);
+    }
+
+    private void OnNewDocument(object? sender, DocumentEventArgs e)
+    {
+        Log($"Rhino new document created. Serial={e.Document.RuntimeSerialNumber}");
+        RestoreSavedStacks(e.Document);
     }
 
     private void OnCloseDocument(object? sender, DocumentEventArgs e)
@@ -1732,6 +1757,7 @@ internal sealed class ModifierEngine : IDisposable
         }
 
         var outputs = new List<ModifierOutputDescriptor>();
+        var geometryOutputs = new List<ModifierOutputDescriptor>();
         foreach (var objectId in outputGroupIds)
         {
             var documentObject = ResolveDocumentObject(document, objectId);
@@ -1743,14 +1769,16 @@ internal sealed class ModifierEngine : IDisposable
             if (TryCreateOutputDescriptor(documentObject, out var descriptor) && descriptor is not null)
             {
                 outputs.Add(descriptor);
+                if (documentObject is IGH_Param param &&
+                    descriptor.Kind == ModifierIoKind.Geometry &&
+                    IsGeometryPipeOutput(param))
+                {
+                    geometryOutputs.Add(descriptor);
+                }
             }
         }
 
         var sceneInput = FindLegacySceneInput(document, inputGroupIds);
-
-        var geometryOutputs = outputs
-            .Where(output => output.Kind == ModifierIoKind.Geometry)
-            .ToList();
 
         if (geometryOutputs.Count == 0)
         {
@@ -1807,6 +1835,11 @@ internal sealed class ModifierEngine : IDisposable
         return param is null
             ? null
             : CreateOutputDescriptor(param, ModifierIoKind.Geometry);
+    }
+
+    private static bool IsGeometryPipeOutput(IGH_Param param)
+    {
+        return OutputAliases.Any(alias => param.NickName.Equals(alias, StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool TryCreateInputDescriptor(IGH_DocumentObject documentObject, out ModifierInputDescriptor? descriptor, out string error)
@@ -3391,6 +3424,40 @@ internal sealed class ModifierEngine : IDisposable
         runtime.RootRevision = NextRevision();
         Log($"Stack runtime reset. Object={objectId}, StepCount={spec.Steps.Count}, RootRevision={runtime.RootRevision}");
         QueueEvaluation(doc, objectId);
+        RaiseStateChanged();
+    }
+
+    private void EnsureSavedStackRuntime(RhinoDoc doc, Guid objectId, ModifierStackSpec spec)
+    {
+        if (spec.Steps.Count == 0 || TryGetStackRuntime(doc, objectId) is not null)
+        {
+            return;
+        }
+
+        UpdateObjectDependencies(doc, objectId, spec);
+        var runtime = GetOrCreateStackRuntime(doc, objectId);
+        runtime.Reset(spec.Steps.Count);
+        runtime.RootRevision = NextRevision();
+        Log($"Saved stack runtime restored lazily. Object={objectId}, StepCount={spec.Steps.Count}, RootRevision={runtime.RootRevision}");
+        QueueEvaluation(doc, objectId);
+    }
+
+    private void RestoreSavedStacks(RhinoDoc doc)
+    {
+        var restoredCount = 0;
+        foreach (var rhinoObject in doc.Objects)
+        {
+            var spec = ModifierStackStorage.Load(rhinoObject);
+            if (spec.Steps.Count == 0)
+            {
+                continue;
+            }
+
+            EnsureSavedStackRuntime(doc, rhinoObject.Id, spec);
+            restoredCount += 1;
+        }
+
+        Log($"Saved stack restore scan complete. Doc={doc.RuntimeSerialNumber}, Restored={restoredCount}");
         RaiseStateChanged();
     }
 
