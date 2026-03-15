@@ -407,6 +407,12 @@ internal sealed class ModifierEngine : IDisposable
             return false;
         }
 
+        if (!enabled && TryGetStackRuntime(doc, objectId) is { } runtime)
+        {
+            runtime.DisposeStep(index);
+            runtime.ClearOutputs(index);
+        }
+
         InvalidateStackFromStep(doc, objectId, spec, index);
         message = enabled ? "Modifier enabled." : "Modifier disabled.";
         Log(message);
@@ -3076,6 +3082,9 @@ internal sealed class ModifierEngine : IDisposable
             var stepSpec = spec.Steps[i];
             if (!stepSpec.Enabled)
             {
+                runtime.DisposeStep(i);
+                runtime.ClearOutputs(i);
+                publishedOutputsByStepId.Remove(stepSpec.StepId);
                 continue;
             }
 
