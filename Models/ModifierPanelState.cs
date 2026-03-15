@@ -81,6 +81,8 @@ internal sealed class ModifierStepInputPanelState
 
     public IReadOnlyList<string> ValueListItems { get; init; } = Array.Empty<string>();
 
+    public bool IsFilePath { get; init; }
+
     public bool IsMissingRequiredValue { get; init; }
 
     public string ValidationMessage { get; init; } = string.Empty;

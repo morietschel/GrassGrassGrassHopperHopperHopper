@@ -40,6 +40,7 @@ public sealed class ModifierStackPanel : Panel
     private enum InputEditorKind
     {
         Text,
+        FilePath,
         Number,
         Slider,
         Toggle,
@@ -698,6 +699,7 @@ public sealed class ModifierStackPanel : Panel
             InputEditorKind.Point => CreateInputBlock(objectId, step, input, CreatePointEditor(objectId, step, input), AppendToolTip(toolTip, GetPointDisplayText(input.SerializedValue))),
             InputEditorKind.Geometry => CreateInputBlock(objectId, step, input, CreateGeometryEditor(objectId, step, input), AppendToolTip(toolTip, GetGeometryDisplayText(input))),
             InputEditorKind.DropDown => CreateInputBlock(objectId, step, input, CreateDropDownEditor(objectId, step, input), toolTip),
+            InputEditorKind.FilePath => CreateInputBlock(objectId, step, input, CreateFilePathEditor(objectId, step, input), toolTip),
             _ => CreateInputBlock(objectId, step, input, CreateTextEditor(objectId, step, input), toolTip),
         };
     }
@@ -888,6 +890,7 @@ public sealed class ModifierStackPanel : Panel
             ModifierIoKind.Point => InputEditorKind.Point,
             ModifierIoKind.Geometry => InputEditorKind.Geometry,
             ModifierIoKind.ValueList => InputEditorKind.DropDown,
+            ModifierIoKind.String when input.IsFilePath => InputEditorKind.FilePath,
             _ => InputEditorKind.Text,
         };
     }
@@ -993,6 +996,135 @@ public sealed class ModifierStackPanel : Panel
 
         textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
         return textEditor;
+    }
+
+    private static Control CreateFilePathEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var textEditor = new TextBox
+        {
+            Text = input.SerializedValue,
+            ReadOnly = input.IsReadOnly,
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
+
+        void CommitPath(string path)
+        {
+            textEditor.Text = path;
+            CommitInput(objectId, step.Index, input, path);
+        }
+
+        var openFileButton = new Button
+        {
+            Text = "F",
+            Width = 28,
+            ToolTip = "Pick existing file",
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        openFileButton.Click += (_, _) =>
+        {
+            using var dialog = new Eto.Forms.OpenFileDialog
+            {
+                Title = $"Select file for {input.Label}",
+                MultiSelect = false,
+                FileName = textEditor.Text,
+            };
+
+            if (dialog.ShowDialog(RhinoEtoApp.MainWindow) != DialogResult.Ok || string.IsNullOrWhiteSpace(dialog.FileName))
+            {
+                return;
+            }
+
+            CommitPath(dialog.FileName);
+        };
+
+        var pickFolderButton = new Button
+        {
+            Text = "D",
+            Width = 28,
+            ToolTip = "Pick directory",
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        pickFolderButton.Click += (_, _) =>
+        {
+            using var dialog = new Eto.Forms.SelectFolderDialog
+            {
+                Title = $"Select folder for {input.Label}",
+            };
+
+            var currentPath = textEditor.Text ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(currentPath))
+            {
+                if (Directory.Exists(currentPath))
+                {
+                    dialog.Directory = currentPath;
+                }
+                else if (File.Exists(currentPath))
+                {
+                    dialog.Directory = Path.GetDirectoryName(currentPath);
+                }
+            }
+
+            if (dialog.ShowDialog(RhinoEtoApp.MainWindow) != DialogResult.Ok || string.IsNullOrWhiteSpace(dialog.Directory))
+            {
+                return;
+            }
+
+            CommitPath(dialog.Directory);
+        };
+
+        var savePathButton = new Button
+        {
+            Text = "S",
+            Width = 28,
+            ToolTip = "Pick output path (can create new file)",
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        savePathButton.Click += (_, _) =>
+        {
+            var currentPath = textEditor.Text ?? string.Empty;
+            using var dialog = new Eto.Forms.SaveFileDialog
+            {
+                Title = $"Select output path for {input.Label}",
+            };
+
+            if (!string.IsNullOrWhiteSpace(currentPath))
+            {
+                if (File.Exists(currentPath))
+                {
+                    dialog.Directory = new Uri(Path.GetDirectoryName(currentPath)!);
+                    dialog.FileName = Path.GetFileName(currentPath);
+                }
+                else if (Directory.Exists(currentPath))
+                {
+                    dialog.Directory = new Uri(currentPath);
+                }
+            }
+
+            if (dialog.ShowDialog(RhinoEtoApp.MainWindow) != DialogResult.Ok || string.IsNullOrWhiteSpace(dialog.FileName))
+            {
+                return;
+            }
+
+            CommitPath(dialog.FileName);
+        };
+
+        return new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = 6,
+            Items =
+            {
+                new StackLayoutItem(textEditor, true),
+                openFileButton,
+                pickFolderButton,
+                savePathButton,
+            },
+        };
     }
 
     private static Control CreateDropDownEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)

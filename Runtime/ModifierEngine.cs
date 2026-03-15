@@ -1260,6 +1260,7 @@ internal sealed class ModifierEngine : IDisposable
                 Kind = input.Kind,
                 SerializedValue = serializedValue,
                 ValueListItems = input.ValueListItems,
+                IsFilePath = input.IsFilePath,
                 Minimum = input.Minimum,
                 Maximum = input.Maximum,
                 DecimalPlaces = input.DecimalPlaces,
@@ -1786,7 +1787,7 @@ internal sealed class ModifierEngine : IDisposable
             throw new InvalidOperationException("Legacy scene geometry input must be unwired.");
         }
 
-        return CreateParamInputDescriptor(param, ModifierIoKind.Geometry, hasDefaultValue: false, defaultSerializedValue: string.Empty, usesSceneGeometryWhenBlank: true, isOptional: false, minimum: null, maximum: null, decimalPlaces: 0);
+        return CreateParamInputDescriptor(param, ModifierIoKind.Geometry, hasDefaultValue: false, defaultSerializedValue: string.Empty, usesSceneGeometryWhenBlank: true, isOptional: false, isFilePath: false, minimum: null, maximum: null, decimalPlaces: 0);
     }
 
     private static ModifierOutputDescriptor? FindLegacyGeometryOutput(GH_Document document, HashSet<Guid> groupedOutputIds)
@@ -1864,6 +1865,7 @@ internal sealed class ModifierEngine : IDisposable
             defaultSerializedValue,
             usesSceneGeometryWhenBlank: kind == ModifierIoKind.Geometry,
             isOptional: param.Optional,
+            isFilePath: param is Param_FilePath,
             minimum: null,
             maximum: null,
             decimalPlaces: GetDefaultDecimalPlaces(param, kind));
@@ -1899,6 +1901,7 @@ internal sealed class ModifierEngine : IDisposable
         string defaultSerializedValue,
         bool usesSceneGeometryWhenBlank,
         bool isOptional,
+        bool isFilePath,
         double? minimum,
         double? maximum,
         int decimalPlaces)
@@ -1915,7 +1918,10 @@ internal sealed class ModifierEngine : IDisposable
             isOptional,
             minimum,
             maximum,
-            decimalPlaces);
+            decimalPlaces)
+        {
+            IsFilePath = isFilePath,
+        };
     }
 
     private static ModifierOutputDescriptor CreateOutputDescriptor(IGH_Param param, ModifierIoKind kind)
@@ -1945,6 +1951,9 @@ internal sealed class ModifierEngine : IDisposable
                 return true;
             case Param_Point:
                 kind = ModifierIoKind.Point;
+                return true;
+            case Param_FilePath:
+                kind = ModifierIoKind.String;
                 return true;
             case Param_String:
                 kind = ModifierIoKind.String;
@@ -3871,6 +3880,8 @@ internal sealed class ModifierEngine : IDisposable
         int DecimalPlaces)
     {
         public IReadOnlyList<string> ValueListItems { get; init; } = Array.Empty<string>();
+
+        public bool IsFilePath { get; init; }
     }
 
     private sealed record ModifierOutputDescriptor(
