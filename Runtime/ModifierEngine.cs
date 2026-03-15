@@ -1259,6 +1259,7 @@ internal sealed class ModifierEngine : IDisposable
                 },
                 Kind = input.Kind,
                 SerializedValue = serializedValue,
+                ValueListItems = input.ValueListItems,
                 Minimum = input.Minimum,
                 Maximum = input.Maximum,
                 DecimalPlaces = input.DecimalPlaces,
@@ -1806,6 +1807,26 @@ internal sealed class ModifierEngine : IDisposable
         descriptor = null;
         error = string.Empty;
 
+        if (documentObject is GH_ValueList valueList)
+        {
+            var selectedIndex = valueList.ListItems.FindIndex(item => item.Selected);
+            if (selectedIndex < 0) selectedIndex = 0;
+            descriptor = new ModifierInputDescriptor(
+                valueList.InstanceGuid,
+                valueList.InstanceGuid.ToString("D"),
+                valueList.NickName,
+                valueList.Description ?? string.Empty,
+                ModifierIoKind.ValueList,
+                selectedIndex.ToString(CultureInfo.InvariantCulture),
+                true,
+                false,
+                true,
+                null,
+                null,
+                0) { ValueListItems = valueList.ListItems.ConvertAll(item => item.Name) };
+            return true;
+        }
+
         if (documentObject is GH_NumberSlider slider)
         {
             descriptor = new ModifierInputDescriptor(
@@ -1969,6 +1990,12 @@ internal sealed class ModifierEngine : IDisposable
                 continue;
             }
 
+            if (documentObject is GH_ValueList valueList)
+            {
+                bindings.Add(new RuntimeInputBinding(descriptor, valueList));
+                continue;
+            }
+
             if (documentObject is IGH_Param param)
             {
                 bindings.Add(new RuntimeInputBinding(descriptor, param));
@@ -2039,6 +2066,18 @@ internal sealed class ModifierEngine : IDisposable
             if (!binding.Slider.TrySetSliderValue(sliderValue))
             {
                 binding.Slider.SetSliderValue(sliderValue);
+            }
+
+            return true;
+        }
+
+        if (binding.ValueList is not null)
+        {
+            if (hasExplicitValue &&
+                int.TryParse(serializedValue, NumberStyles.Integer, CultureInfo.InvariantCulture, out var selectedIndex) &&
+                selectedIndex >= 0 && selectedIndex < binding.ValueList.ListItems.Count)
+            {
+                binding.ValueList.SelectItem(selectedIndex);
             }
 
             return true;
@@ -3829,7 +3868,10 @@ internal sealed class ModifierEngine : IDisposable
         bool IsOptional,
         double? Minimum,
         double? Maximum,
-        int DecimalPlaces);
+        int DecimalPlaces)
+    {
+        public IReadOnlyList<string> ValueListItems { get; init; } = Array.Empty<string>();
+    }
 
     private sealed record ModifierOutputDescriptor(
         Guid ObjectId,
@@ -3852,16 +3894,25 @@ internal sealed class ModifierEngine : IDisposable
             Slider = slider;
         }
 
+        public RuntimeInputBinding(ModifierInputDescriptor descriptor, GH_ValueList valueList)
+        {
+            Descriptor = descriptor;
+            ValueList = valueList;
+        }
+
         public ModifierInputDescriptor Descriptor { get; }
 
         public IGH_Param? Param { get; }
 
         public GH_NumberSlider? Slider { get; }
 
+        public GH_ValueList? ValueList { get; }
+
         public void Expire()
         {
             Param?.ExpireSolution(false);
             Slider?.ExpireSolution(false);
+            ValueList?.ExpireSolution(false);
         }
     }
 

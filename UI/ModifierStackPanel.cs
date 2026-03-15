@@ -45,6 +45,7 @@ public sealed class ModifierStackPanel : Panel
         Toggle,
         Point,
         Geometry,
+        DropDown,
     }
 
     private readonly record struct NumericSliderConfiguration(double Minimum, double Maximum, int Steps, int DecimalPlaces)
@@ -696,6 +697,7 @@ public sealed class ModifierStackPanel : Panel
             InputEditorKind.Number => CreateInputBlock(objectId, step, input, CreateNumericEditor(objectId, step, input), toolTip),
             InputEditorKind.Point => CreateInputBlock(objectId, step, input, CreatePointEditor(objectId, step, input), AppendToolTip(toolTip, GetPointDisplayText(input.SerializedValue))),
             InputEditorKind.Geometry => CreateInputBlock(objectId, step, input, CreateGeometryEditor(objectId, step, input), AppendToolTip(toolTip, GetGeometryDisplayText(input))),
+            InputEditorKind.DropDown => CreateInputBlock(objectId, step, input, CreateDropDownEditor(objectId, step, input), toolTip),
             _ => CreateInputBlock(objectId, step, input, CreateTextEditor(objectId, step, input), toolTip),
         };
     }
@@ -885,6 +887,7 @@ public sealed class ModifierStackPanel : Panel
             ModifierIoKind.Number => InputEditorKind.Number,
             ModifierIoKind.Point => InputEditorKind.Point,
             ModifierIoKind.Geometry => InputEditorKind.Geometry,
+            ModifierIoKind.ValueList => InputEditorKind.DropDown,
             _ => InputEditorKind.Text,
         };
     }
@@ -990,6 +993,39 @@ public sealed class ModifierStackPanel : Panel
 
         textEditor.LostFocus += (_, _) => CommitInput(objectId, step.Index, input, textEditor.Text ?? string.Empty);
         return textEditor;
+    }
+
+    private static Control CreateDropDownEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)
+    {
+        var dropDown = new DropDown
+        {
+            Enabled = IsInputEnabled(step, input),
+        };
+
+        foreach (var item in input.ValueListItems)
+        {
+            dropDown.Items.Add(item);
+        }
+
+        if (int.TryParse(input.SerializedValue, out var selectedIndex) &&
+            selectedIndex >= 0 && selectedIndex < input.ValueListItems.Count)
+        {
+            dropDown.SelectedIndex = selectedIndex;
+        }
+        else if (input.ValueListItems.Count > 0)
+        {
+            dropDown.SelectedIndex = 0;
+        }
+
+        dropDown.SelectedIndexChanged += (_, _) =>
+        {
+            if (dropDown.SelectedIndex >= 0)
+            {
+                CommitInput(objectId, step.Index, input, dropDown.SelectedIndex.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            }
+        };
+
+        return dropDown;
     }
 
     private static Control CreatePointEditor(Guid objectId, ModifierStepPanelState step, ModifierStepInputPanelState input)

@@ -44,6 +44,7 @@ internal enum ModifierIoKind
     Boolean,
     Color,
     Geometry,
+    ValueList,
 }
 
 internal sealed class ModifierStepInputPanelState
@@ -77,6 +78,8 @@ internal sealed class ModifierStepInputPanelState
     public string LinkStatusMessage { get; init; } = string.Empty;
 
     public IReadOnlyList<ModifierInputLinkOptionPanelState> AvailableLinks { get; init; } = Array.Empty<ModifierInputLinkOptionPanelState>();
+
+    public IReadOnlyList<string> ValueListItems { get; init; } = Array.Empty<string>();
 
     public bool IsMissingRequiredValue { get; init; }
 
