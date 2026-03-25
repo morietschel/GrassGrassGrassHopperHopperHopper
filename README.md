@@ -74,6 +74,13 @@ See **[ModifierGuide.md](ModifierGuide.md)** for the full spec. The short versio
 |---------|-------------|
 | `GghRefreshSelectedStack` | Re-runs the stack on the current selection |
 
+## Contributors
+
+- **Dan Kenerson** — Masters in Architectural Computation, UCL
+- **Moritz Rietschel** — Cofounder, Raven
+- **Chuck Driesler** — Engineer, Speckle
+- **Joshua Foxley** — Product Designer, Bentley
+
 ## License
 
 MIT
