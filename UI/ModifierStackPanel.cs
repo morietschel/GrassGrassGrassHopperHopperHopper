@@ -19,23 +19,34 @@ public sealed class ModifierStackPanel : Panel
 {
     private const int MaxSliderResolution = 10000;
     private const int LinkButtonWidth = 32;
-    private const int ToolbarButtonWidth = 44;
-    private const int ToolbarSpacing = 8;
+    private const int IconButtonSize = 24;
+    private const int ToolbarSpacing = 4;
     private const int PanelPadding = 12;
-    private const int MinDefinitionPickerWidth = 100;
-    private const int PreferredDefinitionPickerWidth = 200;
+    private const int SectionSpacing = 8;
+    private const int RowHeaderSpacing = 6;
+    private const int RowHeaderHorizontalPadding = 4;
+    private const int RowHeaderVerticalPadding = 4;
+    private const int StepDetailIndent = 20;
+    private const int StepDetailSpacing = 8;
     private const int MaxOutputPreviewCharacters = 40;
+    private const float DisclosureGlyphFontSize = 15f;
 
     private readonly Label _statusLabel;
     private readonly Scrollable _rowsScrollable;
-    private readonly ComboBox _definitionPicker;
+    private readonly DropDown _definitionPicker;
     private readonly Button _addButton;
     private readonly Button _refreshButton;
+    private readonly Button _editSelectedButton;
+    private readonly Button _moveUpSelectedButton;
+    private readonly Button _moveDownSelectedButton;
+    private readonly Button _applySelectedButton;
+    private readonly Button _deleteSelectedButton;
     private readonly Button _bakeButton;
     private readonly List<string> _importedDefinitionPaths = new();
     private readonly List<DefinitionChoice> _definitionChoices = new();
-    private readonly List<DefinitionChoice> _visibleDefinitionChoices = new();
     private readonly HashSet<string> _expandedStepKeys = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _selectedStepKeys = new(StringComparer.Ordinal);
+    private string? _lastPrimarySelectedStepKey;
 
     private bool _isUpdatingDefinitionPicker;
 
@@ -82,28 +93,50 @@ public sealed class ModifierStackPanel : Panel
 
     public ModifierStackPanel()
     {
-        _definitionPicker = new ComboBox
+        _definitionPicker = new DropDown
         {
             ToolTip = "Search modifiers by name, then pick one to add.",
         };
         _definitionPicker.SelectedIndexChanged += OnDefinitionSelected;
-        _definitionPicker.TextChanged += OnDefinitionPickerTextChanged;
 
-        _addButton = new Button
-        {
-            Text = "+",
-            ToolTip = "Add a modifier from file.",
-            Width = ToolbarButtonWidth,
-        };
-        _addButton.Click += OnAddClicked;
+        // Set initial placeholder
+        _definitionPicker.DataStore = new[] { "Add Modifier..." };
+        _definitionPicker.SelectedIndex = 0;
 
-        _refreshButton = new Button
-        {
-            Text = "↻",
-            ToolTip = "Refresh the current modifier stack.",
-            Width = ToolbarButtonWidth,
-        };
-        _refreshButton.Click += OnRefreshClicked;
+        _addButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.svg.File_Open.svg"),
+            "Import modifier from file",
+            OnAddClicked);
+
+        _refreshButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.Refresh.svg"),
+            "Refresh the current modifier stack.",
+            OnRefreshClicked);
+
+        _editSelectedButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.pencil.svg"),
+            "Open selected modifier definitions in Grasshopper.",
+            OnEditSelectedClicked);
+
+        _moveUpSelectedButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.plugin-sort-up.png"),
+            "Move selected modifiers up.",
+            (_, _) => MoveSelectedSteps(-1));
+
+        _moveDownSelectedButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.plugin-sort-down.png"),
+            "Move selected modifiers down.",
+            (_, _) => MoveSelectedSteps(1));
+
+        _applySelectedButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.checkmark.png"),
+            "Apply selected modifier.",
+            OnApplySelectedClicked);
+
+        _deleteSelectedButton = CreateIconButton(
+            LoadRhinoIcon("Rhino.UI.Resources.Delete.svg"),
+            "Remove selected modifiers.",
+            OnDeleteSelectedClicked);
 
         _bakeButton = new Button
         {
@@ -124,36 +157,60 @@ public sealed class ModifierStackPanel : Panel
             ExpandContentWidth = true,
         };
 
-        var toolbarRow = new StackLayout
+        var pickerRow = new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Items =
+            {
+                new StackLayoutItem(_definitionPicker, true),
+            },
+        };
+
+        var actionRow = new StackLayout
         {
             Orientation = Orientation.Horizontal,
             Spacing = ToolbarSpacing,
             Items =
             {
-                _definitionPicker,
                 _addButton,
                 _refreshButton,
+                _editSelectedButton,
+                _moveUpSelectedButton,
+                _moveDownSelectedButton,
+                _applySelectedButton,
+                _deleteSelectedButton,
+                new StackLayoutItem(new Panel(), true),
+            },
+        };
+
+        var footerRow = new StackLayout
+        {
+            Orientation = Orientation.Horizontal,
+            Spacing = ToolbarSpacing,
+            Items =
+            {
+                _bakeButton,
+                new StackLayoutItem(new Panel(), true),
             },
         };
 
         Content = new StackLayout
         {
             Orientation = Orientation.Vertical,
-            Padding = 12,
-            Spacing = 12,
+            Padding = PanelPadding,
+            Spacing = SectionSpacing,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Items =
             {
-                new StackLayoutItem(toolbarRow, HorizontalAlignment.Left),
+                new StackLayoutItem(actionRow, HorizontalAlignment.Stretch),
+                new StackLayoutItem(pickerRow, HorizontalAlignment.Stretch),
                 _statusLabel,
-                new StackLayoutItem(_rowsScrollable, true),
-                new StackLayoutItem(_bakeButton, HorizontalAlignment.Left),
+                new StackLayoutItem(_rowsScrollable, expand: true) { HorizontalAlignment = HorizontalAlignment.Stretch },
+                new StackLayoutItem(footerRow, HorizontalAlignment.Stretch),
             },
         };
 
-        SizeChanged += (_, _) => UpdateDefinitionPickerWidth();
-
         HelloRhinoCommonPlugin.Instance.Engine.StateChanged += OnEngineStateChanged;
-        UpdateDefinitionPickerWidth();
         RefreshView();
     }
 
@@ -175,6 +232,39 @@ public sealed class ModifierStackPanel : Panel
     private void OnEngineStateChanged(object? sender, EventArgs e)
     {
         Application.Instance?.AsyncInvoke(RefreshView);
+    }
+
+    private static Image? LoadRhinoIcon(string resourceName)
+    {
+        try
+        {
+            var assembly = typeof(Rhino.UI.RhinoEtoApp).Assembly;
+            var stream = assembly.GetManifestResourceStream(resourceName);
+            if (stream is null)
+            {
+                return null;
+            }
+
+            return new Bitmap(stream);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static Button CreateIconButton(Image? icon, string toolTip, EventHandler<EventArgs> clickHandler)
+    {
+        var button = new Button
+        {
+            Image = icon,
+            ImagePosition = ButtonImagePosition.Overlay,
+            ToolTip = toolTip,
+            Width = IconButtonSize,
+            Height = IconButtonSize,
+        };
+        button.Click += clickHandler;
+        return button;
     }
 
     private void OnAddClicked(object? sender, EventArgs e)
@@ -250,42 +340,31 @@ public sealed class ModifierStackPanel : Panel
         }
 
         var selectedIndex = _definitionPicker.SelectedIndex;
-        ResetDefinitionPicker();
 
-        if (selectedIndex < 0 || selectedIndex >= _visibleDefinitionChoices.Count)
+        // Placeholder is at index 0, ignore it
+        if (selectedIndex <= 0)
         {
+            ResetDefinitionPicker();
+            return;
+        }
+
+        // Subtract 1 because placeholder is at index 0
+        var definitionIndex = selectedIndex - 1;
+        if (definitionIndex < 0 || definitionIndex >= _definitionChoices.Count)
+        {
+            ResetDefinitionPicker();
             return;
         }
 
         var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
         if (!state.CanEdit || !state.SelectedObjectId.HasValue)
         {
+            ResetDefinitionPicker();
             return;
         }
 
-        TryAddStep(state, _visibleDefinitionChoices[selectedIndex].FullPath);
-    }
-
-    private void OnDefinitionPickerTextChanged(object? sender, EventArgs e)
-    {
-        if (_isUpdatingDefinitionPicker)
-        {
-            return;
-        }
-
-        UpdateDefinitionPickerFilter(_definitionPicker.Text);
-    }
-
-    private void UpdateDefinitionPickerWidth()
-    {
-        var availableWidth = Width - (PanelPadding * 2) - (ToolbarButtonWidth * 2) - (ToolbarSpacing * 2);
-        if (availableWidth <= 0)
-        {
-            _definitionPicker.Width = PreferredDefinitionPickerWidth;
-            return;
-        }
-
-        _definitionPicker.Width = Math.Max(MinDefinitionPickerWidth, Math.Min(PreferredDefinitionPickerWidth, availableWidth));
+        TryAddStep(state, _definitionChoices[definitionIndex].FullPath);
+        ResetDefinitionPicker();
     }
 
     private void RefreshView()
@@ -294,48 +373,58 @@ public sealed class ModifierStackPanel : Panel
 
         SyncDefinitionChoices(state);
         NormalizeExpandedSteps(state);
+        NormalizeSelectedSteps(state);
 
         var canEdit = state.CanEdit && state.SelectedObjectId.HasValue;
         var canRefresh = canEdit && state.Steps.Count > 0;
         var canBake = canEdit && state.Steps.Count > 0;
+        var selectedSteps = GetSelectedSteps(state);
+
         _definitionPicker.Enabled = canEdit && _definitionChoices.Count > 0;
         _addButton.Enabled = canEdit;
         _refreshButton.Enabled = canRefresh;
         _bakeButton.Enabled = canBake;
+        _editSelectedButton.Enabled = canEdit && selectedSteps.Any(step => !string.IsNullOrWhiteSpace(step.FullPath));
+        _moveUpSelectedButton.Enabled = canEdit && selectedSteps.Any(step => step.Index > 0);
+        _moveDownSelectedButton.Enabled = canEdit && selectedSteps.Any(step => step.Index < state.Steps.Count - 1);
+        _applySelectedButton.Enabled = canEdit && selectedSteps.Count == 1;
+        _deleteSelectedButton.Enabled = canEdit && selectedSteps.Count > 0;
 
         _statusLabel.Visible = canEdit && !string.IsNullOrWhiteSpace(state.StatusMessage);
         _statusLabel.Text = state.StatusMessage;
 
-        var rows = new TableLayout
+        var rows = new StackLayout
         {
-            Spacing = new Size(0, 0),
+            Orientation = Orientation.Vertical,
+            Spacing = 0,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
 
         if (!state.CanEdit)
         {
-            rows.Rows.Add(new TableRow(new TableCell(CreateCenteredMessage(string.IsNullOrWhiteSpace(state.StatusMessage)
+            rows.Items.Add(new StackLayoutItem(CreateCenteredMessage(string.IsNullOrWhiteSpace(state.StatusMessage)
                 ? "Select one object to edit its modifier stack."
-                : state.StatusMessage), true)));
+                : state.StatusMessage), HorizontalAlignment.Stretch));
         }
         else if (state.Steps.Count == 0)
         {
-            rows.Rows.Add(new TableRow(new TableCell(CreateCenteredMessage("No modifiers added yet.\n\nSearch above, or add a modifier\nfrom file to begin"), true)));
+            rows.Items.Add(new StackLayoutItem(CreateCenteredMessage("No modifiers added yet.\n\nSearch above, or add a modifier\nfrom file to begin"), HorizontalAlignment.Stretch));
         }
         else if (state.SelectedObjectId.HasValue)
         {
             for (var i = 0; i < state.Steps.Count; i++)
             {
                 var step = state.Steps[i];
-                rows.Rows.Add(new TableRow(new TableCell(CreateStepRow(
+                rows.Items.Add(new StackLayoutItem(CreateStepRow(
                     state.SelectedObjectId.Value,
-                    step,
-                    canMoveUp: i > 0,
-                    canMoveDown: i < state.Steps.Count - 1), true)));
+                    step), HorizontalAlignment.Stretch));
             }
         }
 
-        // Add a spacer row to push content to the top
-        rows.Rows.Add(new TableRow { ScaleHeight = true });
+        // Add a clickable spacer so clicking empty list space deselects.
+        var spacerPanel = new Panel();
+        spacerPanel.MouseDown += (_, _) => ClearSelection();
+        rows.Items.Add(new StackLayoutItem(spacerPanel, true) { HorizontalAlignment = HorizontalAlignment.Stretch });
 
         _rowsScrollable.Content = rows;
     }
@@ -409,6 +498,26 @@ public sealed class ModifierStackPanel : Panel
 
     private void SyncDefinitionChoices(ModifierPanelState state)
     {
+        var doc = RhinoDoc.ActiveDoc;
+        if (doc is not null)
+        {
+            foreach (var rhinoObject in doc.Objects)
+            {
+                var spec = HelloRhinoCommon.Runtime.ModifierStackStorage.Load(rhinoObject);
+                foreach (var path in spec.Steps
+                             .Select(step => step.Path)
+                             .Where(path => !string.IsNullOrWhiteSpace(path)))
+                {
+                    if (_importedDefinitionPaths.Any(existing => string.Equals(existing, path, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        continue;
+                    }
+
+                    _importedDefinitionPaths.Add(path);
+                }
+            }
+        }
+
         foreach (var path in state.Steps
                      .Select(step => step.FullPath)
                      .Where(path => !string.IsNullOrWhiteSpace(path)))
@@ -440,7 +549,7 @@ public sealed class ModifierStackPanel : Panel
             _definitionChoices.Add(new DefinitionChoice(path, BuildDefinitionDisplayName(path, duplicateNames)));
         }
 
-        UpdateDefinitionPickerFilter(_definitionPicker.Text);
+        UpdateDefinitionPickerFilter(string.Empty);
     }
 
     private static string BuildDefinitionDisplayName(string path, ISet<string> duplicateNames)
@@ -460,28 +569,17 @@ public sealed class ModifierStackPanel : Panel
     private void ResetDefinitionPicker()
     {
         _isUpdatingDefinitionPicker = true;
-        _definitionPicker.SelectedIndex = -1;
-        _definitionPicker.Text = string.Empty;
+        _definitionPicker.SelectedIndex = 0; // Select placeholder
         _isUpdatingDefinitionPicker = false;
-
-        UpdateDefinitionPickerFilter(string.Empty);
     }
 
     private void UpdateDefinitionPickerFilter(string? searchText)
     {
-        var normalizedSearch = searchText?.Trim() ?? string.Empty;
-
-        _visibleDefinitionChoices.Clear();
-        _visibleDefinitionChoices.AddRange(string.IsNullOrWhiteSpace(normalizedSearch)
-            ? _definitionChoices
-            : _definitionChoices.Where(choice => choice.DisplayName.Contains(normalizedSearch, StringComparison.OrdinalIgnoreCase)));
-
         _isUpdatingDefinitionPicker = true;
-        _definitionPicker.DataStore = _visibleDefinitionChoices
-            .Select(choice => choice.DisplayName)
-            .ToList();
-        _definitionPicker.SelectedIndex = -1;
-        _definitionPicker.Text = normalizedSearch;
+        var items = new List<string> { "Add Modifier..." }; // Placeholder first
+        items.AddRange(_definitionChoices.Select(choice => choice.DisplayName));
+        _definitionPicker.DataStore = items;
+        _definitionPicker.SelectedIndex = 0; // Select placeholder
         _isUpdatingDefinitionPicker = false;
     }
 
@@ -502,11 +600,141 @@ public sealed class ModifierStackPanel : Panel
         }
     }
 
+    private void NormalizeSelectedSteps(ModifierPanelState state)
+    {
+        var validKeys = state.Steps.Select(GetStepKey).ToHashSet(StringComparer.Ordinal);
+        _selectedStepKeys.RemoveWhere(key => !validKeys.Contains(key));
+
+        if (!string.IsNullOrWhiteSpace(_lastPrimarySelectedStepKey) && !validKeys.Contains(_lastPrimarySelectedStepKey))
+        {
+            _lastPrimarySelectedStepKey = null;
+        }
+    }
+
+    private List<ModifierStepPanelState> GetSelectedSteps(ModifierPanelState state)
+    {
+        if (_selectedStepKeys.Count == 0)
+        {
+            return new List<ModifierStepPanelState>();
+        }
+
+        return state.Steps
+            .Where(step => _selectedStepKeys.Contains(GetStepKey(step)))
+            .OrderBy(step => step.Index)
+            .ToList();
+    }
+
+    private void SelectStep(ModifierStepPanelState step, bool additive, bool range)
+    {
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
+        var stepKey = GetStepKey(step);
+
+        if (range)
+        {
+            var anchorKey = _lastPrimarySelectedStepKey;
+            if (string.IsNullOrWhiteSpace(anchorKey))
+            {
+                _selectedStepKeys.Clear();
+                _selectedStepKeys.Add(stepKey);
+                _lastPrimarySelectedStepKey = stepKey;
+                RefreshView();
+                return;
+            }
+
+            var anchorIndex = state.Steps
+                .Select((candidate, index) => new { Step = candidate, Index = index })
+                .FirstOrDefault(candidate => string.Equals(GetStepKey(candidate.Step), anchorKey, StringComparison.Ordinal))
+                ?.Index ?? -1;
+            var clickedIndex = state.Steps
+                .Select((candidate, index) => new { Step = candidate, Index = index })
+                .FirstOrDefault(candidate => string.Equals(GetStepKey(candidate.Step), stepKey, StringComparison.Ordinal))
+                ?.Index ?? -1;
+
+            if (anchorIndex < 0 || clickedIndex < 0)
+            {
+                _selectedStepKeys.Clear();
+                _selectedStepKeys.Add(stepKey);
+                _lastPrimarySelectedStepKey = stepKey;
+                RefreshView();
+                return;
+            }
+
+            if (!additive)
+            {
+                _selectedStepKeys.Clear();
+            }
+
+            var minIndex = Math.Min(anchorIndex, clickedIndex);
+            var maxIndex = Math.Max(anchorIndex, clickedIndex);
+            for (var i = minIndex; i <= maxIndex; i++)
+            {
+                _selectedStepKeys.Add(GetStepKey(state.Steps[i]));
+            }
+
+            RefreshView();
+            return;
+        }
+
+        if (additive)
+        {
+            if (_selectedStepKeys.Contains(stepKey))
+            {
+                _selectedStepKeys.Remove(stepKey);
+            }
+            else
+            {
+                _selectedStepKeys.Add(stepKey);
+            }
+        }
+        else
+        {
+            _selectedStepKeys.Clear();
+            _selectedStepKeys.Add(stepKey);
+        }
+
+        _lastPrimarySelectedStepKey = stepKey;
+
+        RefreshView();
+    }
+
+    private void ClearSelection()
+    {
+        if (_selectedStepKeys.Count == 0)
+        {
+            return;
+        }
+
+        _selectedStepKeys.Clear();
+        _lastPrimarySelectedStepKey = null;
+        RefreshView();
+    }
+
+    private static bool IsAdditiveSelection(MouseEventArgs e)
+    {
+        return (e.Modifiers & Keys.Application) == Keys.Application ||
+               (e.Modifiers & Keys.Control) == Keys.Control;
+    }
+
+    private static bool IsRangeSelection(MouseEventArgs e)
+    {
+        return (e.Modifiers & Keys.Shift) == Keys.Shift;
+    }
+
     private static string GetStepKey(ModifierStepPanelState step)
     {
         return step.StepId != Guid.Empty
             ? step.StepId.ToString("N")
             : $"{step.Index}:{step.FullPath}";
+    }
+
+    private static string GetDisclosureGlyph(bool isExpanded)
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return isExpanded ? "˅" : "›";
+        }
+
+        return isExpanded ? "⌄" : "›";
     }
 
     private bool IsStepExpanded(ModifierStepPanelState step)
@@ -530,55 +758,68 @@ public sealed class ModifierStackPanel : Panel
         RefreshView();
     }
 
-    private Control CreateStepRow(Guid objectId, ModifierStepPanelState step, bool canMoveUp, bool canMoveDown)
+    private Control CreateStepRow(Guid objectId, ModifierStepPanelState step)
     {
         var isExpanded = IsStepExpanded(step);
+        var isSelected = _selectedStepKeys.Contains(GetStepKey(step));
+        var headerBackground = isSelected ? SystemColors.Highlight : Colors.Transparent;
+        var headerTextColor = isSelected ? SystemColors.HighlightText : SystemColors.ControlText;
         var container = new StackLayout
         {
             Orientation = Orientation.Vertical,
             Spacing = 0,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
         };
 
-        // Header row: disclosure triangle + checkbox + name (layer-panel style)
-        var disclosureLabel = new Label
+        // Header row: checkbox | name (fills width) | disclosure arrow
+        var disclosureButton = new Button
         {
-            Text = isExpanded ? "▾" : "▸",
-            Width = 16,
-            VerticalAlignment = VerticalAlignment.Center,
+            Text = GetDisclosureGlyph(isExpanded),
+            ToolTip = isExpanded ? "Collapse" : "Expand",
+            Font = new Font(SystemFont.Default, DisclosureGlyphFontSize),
+            Width = 28,
+            Height = 16,
         };
+        disclosureButton.Click += (_, _) => ToggleExpanded(step);
 
-        var actionButtons = new StackLayout
+        var stepNameLabel = CreateStepNameLabel(step, headerTextColor);
+        var enabledCheckBox = CreateStepEnabledCheckBox(objectId, step);
+        var stepNameHost = new StackLayout
         {
             Orientation = Orientation.Horizontal,
-            Spacing = 2,
+            Spacing = 0,
+            VerticalContentAlignment = VerticalAlignment.Center,
+            HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Items =
             {
-                CreateSmallButton("✎", "Edit script", (_, _) => EditStepDefinition(step.FullPath), !string.IsNullOrWhiteSpace(step.FullPath)),
-                CreateSmallButton("↑", "Move up", (_, _) => MoveStep(objectId, step.Index, -1), canMoveUp),
-                CreateSmallButton("↓", "Move down", (_, _) => MoveStep(objectId, step.Index, 1), canMoveDown),
-                CreateApplyButton(objectId, step),
-                CreateSmallButton("✕", "Remove", (_, _) => RemoveStep(objectId, step.Index)),
+                stepNameLabel,
+                new StackLayoutItem(new Panel(), true),
             },
         };
 
-        var headerRow = new StackLayout
+        var headerRow = new TableLayout
         {
-            Orientation = Orientation.Horizontal,
-            Spacing = 4,
-            Padding = new Padding(0, 3),
-            Items =
+            Padding = new Padding(RowHeaderHorizontalPadding, RowHeaderVerticalPadding),
+            Spacing = new Size(4, 0),
+            Rows =
             {
-                disclosureLabel,
-                CreateStepEnabledCheckBox(objectId, step),
-                new StackLayoutItem(CreateStepNameLabel(step), true),
-                actionButtons,
+                new TableRow(
+                    new TableCell(enabledCheckBox),
+                    new TableCell(stepNameHost, scaleWidth: true),
+                    new TableCell(disclosureButton)),
             },
         };
 
-        // Click the disclosure triangle to toggle
-        disclosureLabel.MouseDown += (_, _) => ToggleExpanded(step);
+        var headerContainer = new Panel
+        {
+            Content = headerRow,
+            BackgroundColor = headerBackground,
+        };
 
-        container.Items.Add(new StackLayoutItem(headerRow, HorizontalAlignment.Stretch));
+        headerContainer.MouseDown += (_, e) => SelectStep(step, IsAdditiveSelection(e), IsRangeSelection(e));
+        headerRow.MouseDown += (_, e) => SelectStep(step, IsAdditiveSelection(e), IsRangeSelection(e));
+
+        container.Items.Add(new StackLayoutItem(headerContainer, HorizontalAlignment.Stretch));
 
         // Separator line
         container.Items.Add(new StackLayoutItem(new Panel
@@ -591,7 +832,7 @@ public sealed class ModifierStackPanel : Panel
         {
             container.Items.Add(new StackLayout
             {
-                Padding = new Padding(20, 2, 0, 0),
+                Padding = new Padding(StepDetailIndent, 2, 0, 0),
                 Items = { CreateMessageLabel(step.ErrorMessage, isError: true) },
             });
         }
@@ -602,8 +843,8 @@ public sealed class ModifierStackPanel : Panel
             var childContent = new StackLayout
             {
                 Orientation = Orientation.Vertical,
-                Spacing = 8,
-                Padding = new Padding(20, 6, 0, 6),
+                Spacing = StepDetailSpacing,
+                Padding = new Padding(StepDetailIndent, 6, 0, 6),
             };
 
             foreach (var input in step.Inputs)
@@ -653,41 +894,92 @@ public sealed class ModifierStackPanel : Panel
         return enabledCheckBox;
     }
 
-    private static Label CreateStepNameLabel(ModifierStepPanelState step)
+    private static Label CreateStepNameLabel(ModifierStepPanelState step, Color textColor)
     {
         return new Label
         {
             Text = step.DisplayName,
             ToolTip = step.FullPath,
-            Wrap = WrapMode.Word,
+            TextAlignment = TextAlignment.Left,
+            VerticalAlignment = VerticalAlignment.Center,
+            Wrap = WrapMode.None,
+            TextColor = textColor,
         };
     }
 
-    private static Button CreateSmallButton(string text, string toolTip, EventHandler<EventArgs> onClick, bool enabled = true)
+    private void OnEditSelectedClicked(object? sender, EventArgs e)
     {
-        var button = new Button
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
+        foreach (var step in GetSelectedSteps(state))
         {
-            Text = text,
-            ToolTip = toolTip,
-            Enabled = enabled,
-            Width = 26,
-            Height = 22,
-        };
-        button.Click += onClick;
-        return button;
+            if (!string.IsNullOrWhiteSpace(step.FullPath))
+            {
+                EditStepDefinition(step.FullPath);
+            }
+        }
     }
 
-    private static Button CreateApplyButton(Guid objectId, ModifierStepPanelState step)
+    private void OnApplySelectedClicked(object? sender, EventArgs e)
     {
-        var button = new Button
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
+        var selectedSteps = GetSelectedSteps(state);
+        if (!state.SelectedObjectId.HasValue || selectedSteps.Count != 1)
         {
-            Text = step.Index == 0 ? "Apply" : "Apply Stack",
-            ToolTip = step.Index == 0
-                ? "Bake this modifier into the Rhino object."
-                : $"Bake modifiers 1 through {step.Index + 1} into the Rhino object.",
-        };
-        button.Click += (_, _) => ApplyStep(objectId, step.Index);
-        return button;
+            return;
+        }
+
+        ApplyStep(state.SelectedObjectId.Value, selectedSteps[0].Index);
+    }
+
+    private void OnDeleteSelectedClicked(object? sender, EventArgs e)
+    {
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
+        if (!state.SelectedObjectId.HasValue)
+        {
+            return;
+        }
+
+        var selectedSteps = GetSelectedSteps(state)
+            .OrderByDescending(step => step.Index)
+            .ToList();
+
+        foreach (var step in selectedSteps)
+        {
+            RemoveStep(state.SelectedObjectId.Value, step.Index);
+        }
+
+        _selectedStepKeys.Clear();
+        RefreshView();
+    }
+
+    private void MoveSelectedSteps(int offset)
+    {
+        var state = HelloRhinoCommonPlugin.Instance.Engine.GetPanelState(RhinoDoc.ActiveDoc);
+        if (!state.SelectedObjectId.HasValue || offset == 0)
+        {
+            return;
+        }
+
+        var orderedSteps = offset < 0
+            ? GetSelectedSteps(state).OrderBy(step => step.Index)
+            : GetSelectedSteps(state).OrderByDescending(step => step.Index);
+
+        foreach (var step in orderedSteps)
+        {
+            if (offset < 0 && step.Index == 0)
+            {
+                continue;
+            }
+
+            if (offset > 0 && step.Index == state.Steps.Count - 1)
+            {
+                continue;
+            }
+
+            MoveStep(state.SelectedObjectId.Value, step.Index, offset);
+        }
+
+        RefreshView();
     }
 
     private static Label CreateMessageLabel(string text, bool isError)
